@@ -1,0 +1,376 @@
+import csv
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+
+# ----------------------------
+# PySide compatibility
+# ----------------------------
+try:
+    from PySide import QtGui, QtCore
+    QtWidgets = QtGui
+except ImportError:
+    from PySide2 import QtWidgets, QtCore
+    QtGui = QtWidgets
+
+# ----------------------------
+# Config
+# ----------------------------
+
+DEFAULT_FOLDER = r"C:\Users\Omistaja\Desktop\NTX_Deburr"
+
+# Make sure Deburr UI starts at most once per macro run
+LAUNCHED_NTX_UI = False
+
+
+# ----------------------------
+# SLIDER
+# ----------------------------
+
+class FineSlider(QtGui.QSlider):
+    """
+    QSlider with slower movement when CTRL is held.
+    - Normal drag: behaves like a normal slider.
+    - CTRL + drag: moves in small steps.
+    """
+    def __init__(self, orientation, parent=None):
+        super(FineSlider, self).__init__(orientation, parent)
+        self._last_pos = None
+
+    def mousePressEvent(self, event):
+        self._last_pos = event.pos()
+        super(FineSlider, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        mods = QtGui.QApplication.keyboardModifiers()
+        # If CTRL is held, move in small steps based on mouse movement
+        if mods & QtCore.Qt.ControlModifier:
+            if self._last_pos is not None:
+                dx = event.pos().x() - self._last_pos.x()
+                # every 10 pixels → 1 step (tweak if you want finer/coarser)
+                step = int(dx / 10)
+                if step != 0:
+                    new_val = self.value() + step
+                    new_val = max(self.minimum(), min(self.maximum(), new_val))
+                    self.setValue(new_val)
+                    self._last_pos = event.pos()
+        else:
+            # Normal behaviour when CTRL is NOT held
+            super(FineSlider, self).mouseMoveEvent(event)
+
+
+# ----------------------------
+# Utility helpers
+# ----------------------------
+
+FORBIDDEN_FEATURE_TYPES = [
+    "PolarPattern",
+    "MultiTransform",
+    "Mirrored",
+    "Pattern",
+    "LinearPattern",
+    "Fusion",
+    "SubtractivePipe",
+    "AdditivePipe",
+    "AdditivePattern",
+    "SubtractivePattern"
+]
+
+
+def is_pattern_edge(selection_ex):
+    """Return True if any selected edge originates from a patterned feature."""
+    for s in selection_ex:
+        # Example path: ('Body', 'PolarPattern', 'Edge23')
+        tree_path = s.SubElementNames
+        for name in tree_path:
+            for forbidden in FORBIDDEN_FEATURE_TYPES:
+                if forbidden.lower() in name.lower():
+                    return True
+        # Also test object name
+        if s.Object:
+            objname = s.Object.Name.lower()
+            for forbidden in FORBIDDEN_FEATURE_TYPES:
+                if forbidden.lower() in objname:
+                    return True
+    return False
+
+
+def ensure_only_edge_selections(selection_ex):
+    """Reject selections that include whole objects or faces. Return list of edges or None."""
+    edges = []
+    for s in selection_ex:
+        if not s.SubObjects:
+            # whole object selected
+            return None
+        for so in s.SubObjects:
+            if not isinstance(so, Part.Edge):
+                # face or vertex selected
+                return None
+            edges.append(so)
+    return edges
+
+
+def sort_into_wire(edges):
+    """Attempts to sort selected edges into a single wire (open or closed)."""
+    wires = Part.sortEdges(edges)
+
+    if len(wires) == 0:
+        return None, "Edges cannot be connected into a chain."
+
+    if len(wires) > 1:
+        return None, "Selected edges form multiple, separate chains."
+
+    wire = Part.Wire(wires[0])
+
+    # Accept both open and closed wires
+    return wire, None
+
+
+def hide_python_console():
+    """Hide the FreeCAD Python console dock (when present)."""
+    try:
+        mw = Gui.getMainWindow()
+    except Exception:
+        return
+
+    if not mw:
+        return
+
+    # Try a couple of common object names
+    for name in ("Python console", "PythonConsole"):
+        dock = mw.findChild(QtGui.QDockWidget, name)
+        if dock:
+            dock.hide()
+            break
+
+
+# ----------------------------
+# Core export logic
+# ----------------------------
+
+def export_points_safely(npoints, auto_overwrite=False):
+    selection_ex = Gui.Selection.getSelectionEx()
+
+    # No selection
+    if not selection_ex:
+        QtGui.QMessageBox.warning(
+            None, "Deburr export", "You must select one or more EDGES."
+        )
+        return
+
+    # Pattern check
+    if is_pattern_edge(selection_ex):
+        QtGui.QMessageBox.warning(
+            None,
+            "Deburr export",
+            "You selected edges from a patterned feature (PolarPattern / Mirror / etc).\n\n"
+            "Select edges from the ORIGINAL geometry only."
+        )
+        return
+
+    # Ensure edges only
+    edges = ensure_only_edge_selections(selection_ex)
+    if edges is None or len(edges) == 0:
+        QtGui.QMessageBox.warning(
+            None,
+            "Deburr export",
+            "Invalid selection.\n\n"
+            "Select EDGES only (no faces, no bodies, no patterned copies)."
+        )
+        return
+
+    # Sort edges into a single open chain
+    wire, error = sort_into_wire(edges)
+    if error:
+        QtGui.QMessageBox.warning(None, "Deburr export", error)
+        return
+
+    # Preview wire
+    try:
+        Part.show(wire, "DeburrPreview")
+    except Exception:
+        pass
+
+    # Discretize
+    points = wire.discretize(Number=int(npoints))
+
+    # ------------------------------------------
+    # Save CSV
+    # ------------------------------------------
+    if auto_overwrite:
+        # Always overwrite this file in the NTX_Deburr folder
+        fname = DEFAULT_FOLDER + "\\edge_points.csv"
+    else:
+        fname, _ = QtGui.QFileDialog.getSaveFileName(
+            None,
+            "Save deburr edge points",
+            DEFAULT_FOLDER + "\\edge_points.csv",
+            "CSV files (*.csv);;All files (*.*)"
+        )
+
+        if not fname:
+            # Remove preview if it exists
+            doc = App.ActiveDocument
+            if doc and doc.getObject("DeburrPreview"):
+                doc.removeObject("DeburrPreview")
+            return
+
+    # Write file
+    with open(fname, "w", newline="") as f:
+        writer = csv.writer(f)
+        for p in points:
+            writer.writerow([p.x, p.y, p.z])
+
+    # ------------------------------------------
+    # Info popup (normal or auto-closing)
+    # ------------------------------------------
+    if auto_overwrite:
+        msg = QtGui.QMessageBox(
+            QtGui.QMessageBox.Information,
+            "Deburr export",
+            f"Exported {len(points)} points.\nSaved to:\n{fname}",
+            QtGui.QMessageBox.NoButton
+        )
+        QtCore.QTimer.singleShot(2000, msg.accept)  # auto-close after 2 s
+        msg.exec_()
+    else:
+        QtGui.QMessageBox.information(
+            None, "Deburr export",
+            f"Exported {len(points)} points.\nSaved to:\n{fname}"
+        )
+
+
+    # ------------------------------------------
+    # Launch NTX Deburr UI with this CSV (ONCE)
+    # ------------------------------------------
+    global LAUNCHED_NTX_UI
+
+    if not LAUNCHED_NTX_UI:
+        try:
+            import subprocess
+            import os
+
+            ui_script = r"C:\Users\Omistaja\Desktop\NTX_Deburr\ntx_deburr_ui.py"
+            pythonw_exe = r"C:\Users\Omistaja\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\pythonw.exe"
+
+            if not os.path.isfile(pythonw_exe):
+                raise FileNotFoundError("Python executable not found: " + pythonw_exe)
+
+            if not os.path.isfile(ui_script):
+                raise FileNotFoundError("UI script not found: " + ui_script)
+
+            CREATE_NO_WINDOW = 0x08000000
+
+            subprocess.Popen(
+                [pythonw_exe, ui_script, fname],
+                creationflags=CREATE_NO_WINDOW
+            )
+
+            LAUNCHED_NTX_UI = True
+
+        except Exception as e:
+            QtGui.QMessageBox.warning(
+                None,
+                "Deburr export",
+                "CSV saved, but launching the NTX Deburr UI failed:\n" + str(e),
+            )
+            print("Error launching NTX Deburr UI:", e)
+
+
+
+
+# ----------------------------
+# Dialog UI
+# ----------------------------
+
+class DeburrExportDialog(QtGui.QDialog):
+    def __init__(self, parent=None):
+        super(DeburrExportDialog, self).__init__(parent)
+        self.setWindowTitle("Safe Deburr CSV Export")
+
+        layout = QtGui.QVBoxLayout(self)
+
+        # --- Number of points row: big label + spinbox ---
+        top_row = QtGui.QHBoxLayout()
+
+        self.slider_label = QtGui.QLabel("Number of points:")
+        font = self.slider_label.font()
+        font.setPointSize(font.pointSize() + 2)
+        font.setBold(True)
+        self.slider_label.setFont(font)
+
+        self.spin = QtGui.QSpinBox()
+        self.spin.setMinimum(10)
+        self.spin.setMaximum(600)
+        self.spin.setValue(120)
+
+        top_row.addWidget(self.slider_label)
+        top_row.addWidget(self.spin)
+
+        layout.addLayout(top_row)
+
+        # --- Slider under the label+spinbox ---
+        self.slider = FineSlider(QtCore.Qt.Horizontal)
+        self.slider.setMinimum(10)
+        self.slider.setMaximum(600)
+        self.slider.setValue(120)
+        self.slider.setTickInterval(10)
+        self.slider.setTickPosition(QtGui.QSlider.TicksBelow)
+
+        layout.addWidget(self.slider)
+
+        # keep slider and spinbox in sync
+        self.slider.valueChanged.connect(self.spin.setValue)
+        self.spin.valueChanged.connect(self.slider.setValue)
+
+        # --- Auto-overwrite / auto-launch checkbox ---
+        self.auto_overwrite_chk = QtGui.QCheckBox(
+            "Auto overwrite default file and auto-launch deburr tool"
+        )
+        self.auto_overwrite_chk.setChecked(True)   # default ON
+        layout.addWidget(self.auto_overwrite_chk)
+
+        # --- Buttons: OK / Cancel / Help ---
+        btn_box = QtGui.QDialogButtonBox(
+            QtGui.QDialogButtonBox.Ok |
+            QtGui.QDialogButtonBox.Cancel |
+            QtGui.QDialogButtonBox.Help
+        )
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        btn_box.helpRequested.connect(self.show_help)
+        layout.addWidget(btn_box)
+
+    def update_label(self, val):
+        # Not used, kept for possible future tweaks
+        pass
+
+    def show_help(self):
+        QtGui.QMessageBox.information(
+            self,
+            "Help – Safe Deburr CSV Export",
+            (
+                "Usage:\n\n"
+                "1. Select ONLY edges from the ORIGINAL feature (no PolarPattern/Mirror).\n"
+                "2. Set the number of points with the slider or by typing in the box.\n"
+                "   (CTRL + drag on slider = fine adjustment.)\n"
+                "3. Press OK and choose where to save edge_points.csv, or\n"
+                "   enable auto-overwrite for fast export.\n"
+            )
+        )
+
+    def accept(self):
+        npoints = self.slider.value()
+        auto_over = self.auto_overwrite_chk.isChecked()
+        export_points_safely(npoints, auto_overwrite=auto_over)
+        super(DeburrExportDialog, self).accept()
+
+
+# ----------------------------
+# Entry point
+# ----------------------------
+
+if __name__ == "__main__":
+    hide_python_console()
+    d = DeburrExportDialog()
+    d.exec_()
