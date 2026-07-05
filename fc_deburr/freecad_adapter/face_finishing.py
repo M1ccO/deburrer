@@ -4,6 +4,7 @@ import math
 
 from ..domain.errors import GeometryError
 from ..domain.models import (
+    CutDirection,
     FaceRegion,
     MotionKind,
     Operation,
@@ -69,7 +70,10 @@ def solve_face_finish(
 
     points = []
     for pass_index, samples in enumerate(all_passes):
-        if pass_index % 2:
+        reverse_pass = bool(pass_index % 2)
+        if operation.cut_direction is CutDirection.REVERSE:
+            reverse_pass = not reverse_pass
+        if reverse_pass:
             samples = tuple(reversed(samples))
         cutter_points = []
         for sample_index, (contact, normal) in enumerate(samples):

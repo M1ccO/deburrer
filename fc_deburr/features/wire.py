@@ -1,12 +1,21 @@
 import math
 from dataclasses import replace
 
-from ..domain.models import FeatureLoop, FeatureSample, Operation, PositioningMode
+from ..domain.models import (
+    CutDirection,
+    FeatureLoop,
+    FeatureSample,
+    Operation,
+    PositioningMode,
+)
 from ..geometry.vectors import dot, normalize, scale
 
 
 def _subdivide_at_corners(
-    samples: tuple, max_tangent_step_deg: float = 3.0, max_iter: int = 10,
+    samples: tuple,
+    closed: bool,
+    max_tangent_step_deg: float = 3.0,
+    max_iter: int = 10,
 ) -> tuple:
     """Insert midpoints where the tangent changes more than ``max_tangent_step_deg``.
 
@@ -19,7 +28,8 @@ def _subdivide_at_corners(
     for _ in range(max_iter):
         count = len(samples)
         new_samples = []
-        for i in range(count):
+        segment_count = count if closed else count - 1
+        for i in range(segment_count):
             new_samples.append(samples[i])
             cur = samples[i]
             nxt = samples[(i + 1) % count]
@@ -47,6 +57,8 @@ def _subdivide_at_corners(
                     source_edge_id="resampled",
                 )
             )
+        if not closed:
+            new_samples.append(samples[-1])
         if len(new_samples) == count:
             return tuple(new_samples)
         samples = new_samples
@@ -72,13 +84,36 @@ def _orthogonalize(v, normal):
     return _normalize_or(v_out, normal)
 
 
-def prepare_wire_loop(loop: FeatureLoop, operation: Operation) -> FeatureLoop:
+def prepare_wire_loop(
+    loop: FeatureLoop,
+    operation: Operation,
+    subdivide_for_posture: bool = True,
+) -> FeatureLoop:
     """Return an operation-specific view without mutating exported geometry."""
 
     samples = loop.samples
-    samples = _subdivide_at_corners(samples)
+    reversed_for_cut = operation.cut_direction is CutDirection.REVERSE
+    if reversed_for_cut:
+        if loop.closed:
+            samples = samples[:1] + tuple(reversed(samples[1:]))
+        else:
+            samples = tuple(reversed(samples))
+        samples = tuple(
+            replace(
+                sample,
+                tangent=tuple(-component for component in sample.tangent),
+            )
+            for sample in samples
+        )
+    if subdivide_for_posture:
+        samples = _subdivide_at_corners(samples, closed=loop.closed)
 
     if operation.positioning_mode is PositioningMode.CENTER:
+        if not loop.closed:
+            raise ValueError(
+                "Center Positioning requires a closed feature; "
+                "use Tangent Positioning for an open edge chain"
+            )
         if loop.center_xyz is None:
             raise ValueError("Center Positioning requires a calculated wire center")
         center = loop.center_xyz
@@ -106,4 +141,10 @@ def prepare_wire_loop(loop: FeatureLoop, operation: Operation) -> FeatureLoop:
             )
             for sample in samples
         )
-    return replace(loop, samples=tuple(samples))
+    return replace(
+        loop,
+        samples=tuple(samples),
+        reversed_from_selection=(
+            loop.reversed_from_selection ^ reversed_for_cut
+        ),
+    )

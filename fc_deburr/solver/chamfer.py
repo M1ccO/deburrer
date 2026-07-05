@@ -148,10 +148,12 @@ def solve_chamfer_cut(
             )
         )
 
-    # Explicitly close the cut at C0.  This is solver-owned duplication, not a
-    # duplicate in the source feature data.
-    first = points[0]
-    points.append(replace(first, seq=len(points), flags=first.flags + ("closure",)))
+    # Closed loops explicitly return to C0. Open chains retain their real end.
+    if loop.closed:
+        first = points[0]
+        points.append(
+            replace(first, seq=len(points), flags=first.flags + ("closure",))
+        )
     return Toolpath(
         feature_id=loop.id,
         operation_id=operation.id,

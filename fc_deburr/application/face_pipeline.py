@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from ..domain.errors import ValidationError
 from ..domain.models import (
     FaceRegion,
@@ -13,6 +15,7 @@ from ..machine.backends import (
 from ..machine.profiles import MachineProfile
 from ..machine.validation import validate_machine_path
 from ..solver.posture import realize_motion_mode
+from ..solver.transforms import apply_spring_passes
 from .pipeline import PipelineResult
 
 
@@ -26,11 +29,16 @@ def calculate_face_toolpath(
     kinematics_backend = (
         kinematics_backend or LegacyNtxKinematicsBackend()
     )
+    if (
+        tool.kind.value == "ball"
+        and operation_motion_mode(operation).value == "indexed_3_plus_2"
+    ):
+        operation = replace(operation, lead_deg=0.0, tilt_deg=0.0)
     analytic_path = solve_face_finish(region, tool, operation)
     realized = realize_motion_mode(
         analytic_path, tool, operation, machine_profile
     )
-    model_path = realized.path
+    model_path = apply_spring_passes(realized.path, operation)
     machine_path = kinematics_backend.solve_path(
         model_path,
         machine_profile,

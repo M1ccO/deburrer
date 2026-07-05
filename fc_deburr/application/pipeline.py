@@ -7,6 +7,7 @@ from ..domain.errors import GeometryError, ValidationError
 from ..domain.models import (
     FeatureLoop,
     MachineToolpath,
+    MotionMode,
     Operation,
     ToolDefinition,
     ToolKind,
@@ -41,6 +42,7 @@ from ..solver.ball import solve_ball_cut
 from ..solver.chamfer import solve_chamfer_cut
 from ..solver.motion import add_approach_and_retract
 from ..solver.posture import realize_motion_mode
+from ..solver.transforms import apply_spring_passes
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,25 @@ def _b_limit_severity(report: ValidationReport) -> int:
     return sum(1 for issue in report.issues if issue.code == "machine.b_limit")
 
 
+def _format_blocking_issues(
+    report: ValidationReport,
+    limit: int = 6,
+) -> str:
+    blocking = [issue for issue in report.issues if issue.is_error]
+    rendered = []
+    for issue in blocking[:limit]:
+        sample = (
+            " (sample %d)" % issue.sample_index
+            if issue.sample_index is not None
+            else ""
+        )
+        rendered.append(issue.message + sample)
+    remaining = len(blocking) - len(rendered)
+    if remaining > 0:
+        rendered.append("%d additional issue(s)" % remaining)
+    return "; ".join(rendered)
+
+
 def _try_side(
     loop: FeatureLoop,
     tool: ToolDefinition,
@@ -69,12 +90,35 @@ def _try_side(
     kinematics_backend: MachineKinematicsBackend,
     selection_weights: SelectionWeights,
 ) -> PipelineResult:
-    prepared_loop = prepare_wire_loop(loop, operation)
-    feature_report = validate_feature(prepared_loop, machine_profile)
+    mode = operation_motion_mode(operation)
+    spherical_indexed = (
+        tool.kind is ToolKind.BALL
+        and mode is MotionMode.INDEXED_3_PLUS_2
+    )
+    if spherical_indexed:
+        operation = dc_replace(
+            operation,
+            lead_deg=0.0,
+            tilt_deg=0.0,
+        )
+    prepared_loop = prepare_wire_loop(
+        loop,
+        operation,
+        subdivide_for_posture=not spherical_indexed,
+    )
+    feature_report = validate_feature(
+        prepared_loop,
+        machine_profile,
+        discontinuities_are_warnings=spherical_indexed,
+    )
     if not feature_report.ok:
         raise ValidationError(
-            "Invalid feature: "
-            + "; ".join(issue.message for issue in feature_report.issues)
+            "Invalid feature for %s/%s: %s"
+            % (
+                tool.kind.value,
+                mode.value,
+                _format_blocking_issues(feature_report),
+            )
         )
 
     if tool.kind is ToolKind.CHAMFER:
@@ -84,15 +128,32 @@ def _try_side(
     else:
         raise ValidationError("Unsupported tool kind: %s" % tool.kind)
 
+    # For a spherical cutter, contact geometry is independent of spindle
+    # orientation. Realize the fixed indexed posture before machine
+    # feasibility so varying local bisectors are preferences, not false
+    # per-station B/C requirements.
+    pre_realized = (
+        realize_motion_mode(
+            analytic_path,
+            tool,
+            operation,
+            machine_profile,
+        )
+        if spherical_indexed
+        else None
+    )
+    candidate_path = (
+        pre_realized.path if pre_realized is not None else analytic_path
+    )
+
     intent = contact_intent_from_operation(
         prepared_loop.id, tool, operation
     )
     assembly = tool_assembly_from_definition(tool)
-    candidate_graph = toolpath_to_candidate_graph(analytic_path, intent)
+    candidate_graph = toolpath_to_candidate_graph(candidate_path, intent)
     candidate_graph, diagnostics = evaluate_graph(
         candidate_graph, intent, assembly, feasibility_backend
     )
-    mode = operation_motion_mode(operation)
     machine_graph = kinematics_backend.expand(
         candidate_graph,
         machine_profile,
@@ -104,13 +165,18 @@ def _try_side(
         raise ValidationError(str(error)) from error
 
     selected_path = selected_sequence_to_toolpath(
-        selected, analytic_path
+        selected, candidate_path
     )
-    realized = realize_motion_mode(
-        selected_path, tool, operation, machine_profile
+    realized = (
+        dc_replace(pre_realized, path=selected_path)
+        if pre_realized is not None
+        else realize_motion_mode(
+            selected_path, tool, operation, machine_profile
+        )
     )
     cut_path = realized.path
     model_path = add_approach_and_retract(cut_path, operation)
+    model_path = apply_spring_passes(model_path, operation)
     machine_path = kinematics_backend.solve_path(
         model_path,
         machine_profile,
@@ -130,7 +196,9 @@ def _try_side(
     return PipelineResult(
         model_path=model_path,
         machine_path=machine_path,
-        validation=machine_report,
+        validation=ValidationReport(
+            feature_report.issues + machine_report.issues
+        ),
         side_auto_picked=False,
         side_used=bool(operation.flip_side),
         kernel_diagnostics=diagnostics,
@@ -203,6 +271,14 @@ def calculate_toolpath(
         alt_error = error
 
     if primary is None and alt is None:
+        if str(primary_error) == str(alt_error):
+            raise ValidationError(
+                "No feasible %s posture: %s"
+                % (
+                    operation_motion_mode(operation).value,
+                    primary_error or "failed",
+                )
+            )
         raise ValidationError(
             "No feasible %s posture. Requested side: %s. "
             "Opposite side: %s"
@@ -230,6 +306,6 @@ def calculate_toolpath(
     if not chosen.validation.ok:
         raise ValidationError(
             "Invalid machine path: "
-            + "; ".join(issue.message for issue in chosen.validation.issues)
+            + _format_blocking_issues(chosen.validation)
         )
     return chosen

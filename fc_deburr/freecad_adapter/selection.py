@@ -118,8 +118,7 @@ def extract_feature_loop_from_shapes(
         raise SelectionError("Selected edges must form one connected chain")
     ordered = list(clusters[0])
     wire = Part.Wire(ordered)
-    if not wire.isClosed():
-        raise SelectionError("The first toolpath workflow requires a closed chain")
+    wire_closed = wire.isClosed()
 
     start_point = _point(start_vertex.Point)
     ordered = _start_and_orient_edges(ordered, start_point, False)
@@ -132,8 +131,6 @@ def extract_feature_loop_from_shapes(
         edge_id = _lookup_edge_id(source_ids, edge)
         adjacent = _adjacent_faces(parent_shape, edge)
         if not adjacent and _edge_lies_on_face(edge, canonical_guide_face):
-            # Sketch-derived or independently imported wires can be coincident
-            # with a face boundary without sharing OpenCascade topology.
             adjacent = [canonical_guide_face]
         if len(adjacent) not in (1, 2):
             raise SelectionError(
@@ -171,8 +168,12 @@ def extract_feature_loop_from_shapes(
             sample_edge_ids.append(edge_id)
             sample_faces.append((guide, other))
 
-    if len(positions) < 3:
-        raise SelectionError("Closed feature produced fewer than three samples")
+    min_required = 3 if wire_closed else 2
+    if len(positions) < min_required:
+        raise SelectionError(
+            "%s feature produced fewer than %d samples"
+            % ("Closed" if wire_closed else "Open", min_required)
+        )
     if _distance(positions[0], start_point) > POINT_TOLERANCE:
         raise SelectionError("Unable to anchor the ordered chain at the C0 vertex")
     if reverse:
@@ -184,8 +185,18 @@ def extract_feature_loop_from_shapes(
 
     samples = []
     for index, position in enumerate(positions):
-        previous = positions[(index - 1) % len(positions)]
-        following = positions[(index + 1) % len(positions)]
+        if wire_closed:
+            previous = positions[(index - 1) % len(positions)]
+            following = positions[(index + 1) % len(positions)]
+        elif index == 0:
+            previous = position
+            following = positions[1]
+        elif index == len(positions) - 1:
+            previous = positions[index - 1]
+            following = position
+        else:
+            previous = positions[index - 1]
+            following = positions[index + 1]
         tangent = normalize(sub(following, previous), "sample tangent")
         guide, other = sample_faces[index]
         guide_normal = _face_normal(guide, position)
@@ -209,7 +220,7 @@ def extract_feature_loop_from_shapes(
     return FeatureLoop(
         id=feature_id,
         samples=tuple(samples),
-        closed=True,
+        closed=wire_closed,
         source_object_id=source_object_id,
         source_edge_ids=tuple(label for _, label in source_ids),
         guide_face_id=guide_face_id,

@@ -32,10 +32,23 @@ def contact_intent_from_operation(
             "contact_radius", tool.contact_radius
         )
     else:
-        target_mode = "rounded_break"
-        target_amount = operation.ball_engagement
+        target_mode = (
+            "rounded_break_width"
+            if operation.ball_break_width is not None
+            else "rounded_break_radial_infeed"
+        )
+        target_amount = (
+            operation.ball_break_width
+            if operation.ball_break_width is not None
+            else operation.ball_engagement
+        )
         engagement = EngagementLocation(
-            "radial_infeed", operation.ball_engagement
+            (
+                "face_width"
+                if operation.ball_break_width is not None
+                else "radial_infeed"
+            ),
+            target_amount,
         )
     return ContactIntent(
         feature_id=feature_id,

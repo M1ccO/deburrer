@@ -28,6 +28,11 @@ cam_kernel/
 2. **v1**: Continuous 5-axis deburring, posture cost optimization, FCL collision
 3. **v2**: 4+1 and surface finishing, multi-machine abstraction, stock-aware
 
+The web client now renders STEP tessellation with triangle-to-face topology,
+ray-picks faces and edges, and applies the explicit selection to edge deburring
+or OCP-based face finishing. See the repository-level
+`OPENMILL_FEATURE_GAP.md` for the full product checklist.
+
 ## Usage
 
 ```python
@@ -41,7 +46,15 @@ from cam_kernel.post import FanucNtxPost
 
 ## Development
 
-```bash
-pip install -e ".[dev]"
-pytest
+From the repository root, install the web, STEP/OCCT, and test dependencies:
+
+```powershell
+python -m pip install -e ".\cam_kernel[occt,dev]"
+python -m pytest -q
+```
+
+Launch the local web UI:
+
+```powershell
+.\cam_kernel\web_ui.bat
 ```

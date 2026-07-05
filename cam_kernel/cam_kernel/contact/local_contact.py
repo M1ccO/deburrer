@@ -47,136 +47,86 @@ class ContactPoint:
     other_normal: Optional[Vec3] = None
 
 
-def ball_contact_on_edge(samples, ball_radius: float, engagement: float) -> Tuple[ContactPoint, ...]:
+def ball_contact_on_edge(
+    samples,
+    ball_radius: float,
+    engagement: float,
+    break_width: float = None,
+    lead_deg: float = 0.0,
+    tilt_deg: float = 0.0,
+) -> Tuple[ContactPoint, ...]:
     """Compute ball-tool contact for each edge sample.
 
-    Delegates to ``fc_deburr.solver.ball`` for the full pipeline and
-    extracts just the contact points.
+    Uses the standalone ball solver from ``solver_core``.
     """
-    from fc_deburr.domain.models import (
-        FeatureLoop,
-        FeatureSample,
-        FeatureSourceKind,
-        Operation,
-        PathPoint,
-        ToolDefinition,
-        ToolKind,
-        MotionKind,
-        PositioningMode,
-    )
-    from fc_deburr.solver.ball import solve_ball_cut
+    from .solver_core import solve_ball_cut, BallSolverError
 
-    f_samples = tuple(
-        FeatureSample(
-            position=s.position,
-            tangent=s.tangent,
-            guide_normal=s.guide_normal,
-            other_normal=s.other_normal,
-            source_edge_id=s.edge_id,
+    try:
+        results = solve_ball_cut(
+            samples,
+            ball_radius=ball_radius,
+            break_width=break_width,
+            ball_engagement=engagement if break_width is None else None,
+            lead_deg=lead_deg,
+            tilt_deg=tilt_deg,
         )
-        for s in samples
-    )
-    loop = FeatureLoop(
-        id="local_contact",
-        samples=f_samples,
-        closed=True,
-        source_kind=FeatureSourceKind.WIRE,
-    )
-    tool = ToolDefinition(
-        id="ball_local",
-        kind=ToolKind.BALL,
-        diameter=ball_radius * 2.0,
-        stickout=50.0,
-        cutting_length=ball_radius * 4.0,
-    )
-    op = Operation(
-        id="local_op",
-        tool_id="ball_local",
-        ball_engagement=engagement,
-        feed=800.0,
-        motion_mode=None,  # will be set later
-    )
-    op = op.__class__(
-        **{**op.__dict__, "motion_mode": __import__("fc_deburr.domain.models", fromlist=["MotionMode"]).MotionMode.INDEXED_3_PLUS_2}
-    )
-    tp = solve_ball_cut(loop, tool, op)
+    except BallSolverError as exc:
+        raise ValueError("Ball solve failed: %s" % exc)
+
     contact_points = []
-    for pt in tp.points:
-        if pt.motion == MotionKind.CUT:
-            contact_points.append(
-                ContactPoint(
-                    seq=pt.seq,
-                    contact_xyz=pt.contact_xyz if pt.contact_xyz else pt.xyz,
-                    tool_axis=pt.tool_axis,
-                    cutter_ref_xyz=pt.xyz,
-                    kind=ContactKind.BALL,
-                    source_tangent=pt.tangent,
-                )
+    for pt in results:
+        contact_points.append(
+            ContactPoint(
+                seq=pt.seq,
+                contact_xyz=pt.contact_xyz,
+                tool_axis=pt.tool_axis,
+                cutter_ref_xyz=pt.xyz,
+                kind=ContactKind.BALL,
+                source_tangent=pt.tangent,
             )
+        )
     return tuple(contact_points)
 
 
-def chamfer_contact_on_edge(samples, diameter: float, included_angle_deg: float, width: float) -> Tuple[ContactPoint, ...]:
+def chamfer_contact_on_edge(
+    samples,
+    diameter: float,
+    included_angle_deg: float,
+    width: float,
+    contact_radius: float = 3.0,
+    tip_flat_diameter: float = 0.0,
+    axial_correction: float = 0.0,
+    lead_deg: float = 0.0,
+) -> Tuple[ContactPoint, ...]:
     """Compute chamfer-tool contact for each edge sample.
 
-    Delegates to ``fc_deburr.solver.chamfer`` for the full pipeline.
+    Uses the standalone chamfer solver from ``solver_core``.
     """
-    from fc_deburr.domain.models import (
-        FeatureLoop,
-        FeatureSample,
-        FeatureSourceKind,
-        Operation,
-        ToolDefinition,
-        ToolKind,
-        MotionKind,
-        PositioningMode,
-    )
-    from fc_deburr.solver.chamfer import solve_chamfer_cut
+    from .solver_core import solve_chamfer_cut, ChamferSolverError
 
-    f_samples = tuple(
-        FeatureSample(
-            position=s.position,
-            tangent=s.tangent,
-            guide_normal=s.guide_normal,
-            other_normal=s.other_normal,
-            source_edge_id=s.edge_id,
+    try:
+        results = solve_chamfer_cut(
+            samples,
+            included_angle_deg=included_angle_deg,
+            contact_radius=contact_radius,
+            tip_flat_diameter=tip_flat_diameter,
+            target_width=width,
+            axial_correction=axial_correction,
+            lead_deg=lead_deg,
         )
-        for s in samples
-    )
-    loop = FeatureLoop(
-        id="local_contact",
-        samples=f_samples,
-        closed=True,
-        source_kind=FeatureSourceKind.WIRE,
-    )
-    tool = ToolDefinition(
-        id="chamfer_local",
-        kind=ToolKind.CHAMFER,
-        diameter=diameter,
-        stickout=50.0,
-        included_angle_deg=included_angle_deg,
-        tip_flat_diameter=0.2,
-    )
-    MotionMode = __import__("fc_deburr.domain.models", fromlist=["MotionMode"]).MotionMode
-    op = Operation(
-        id="local_op",
-        tool_id="chamfer_local",
-        target_width=width,
-        feed=800.0,
-        motion_mode=MotionMode.INDEXED_3_PLUS_2,
-    )
-    tp = solve_chamfer_cut(loop, tool, op)
+    except ChamferSolverError as exc:
+        raise ValueError("Chamfer solve failed: %s" % exc)
+
     contact_points = []
-    for pt in tp.points:
-        if pt.motion == MotionKind.CUT:
-            contact_points.append(
-                ContactPoint(
-                    seq=pt.seq,
-                    contact_xyz=pt.contact_xyz if pt.contact_xyz else pt.xyz,
-                    tool_axis=pt.tool_axis,
-                    cutter_ref_xyz=pt.xyz,
-                    kind=ContactKind.CHAMFER,
-                    source_tangent=pt.tangent,
-                )
+    for pt in results:
+        contact_points.append(
+            ContactPoint(
+                seq=pt.seq,
+                contact_xyz=pt.contact_xyz,
+                tool_axis=pt.tool_axis,
+                cutter_ref_xyz=pt.xyz,
+                kind=ContactKind.CHAMFER,
+                source_tangent=pt.tangent,
             )
+        )
     return tuple(contact_points)

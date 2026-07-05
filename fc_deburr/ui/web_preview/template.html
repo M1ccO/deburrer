@@ -5,20 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Deburr Preview</title>
 <style>
-  body { margin: 0; overflow: hidden; background: #111417; }
+  body { margin: 0; overflow: hidden; background: #c8d1d7; }
   canvas { display: block; }
-  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #9aa4ad; font-family: 'Segoe UI', sans-serif; font-size: 14pt; z-index: 10; }
+  #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #46545d; font-family: 'Segoe UI', sans-serif; font-size: 14pt; z-index: 10; }
   #error { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #ff6868; font-family: 'Segoe UI', sans-serif; font-size: 13pt; display: none; z-index: 10; }
   #legend {
     position: absolute; top: 8px; left: 10px; display: none;
-    gap: 16px; font-family: 'Segoe UI', sans-serif; font-size: 12px; color: #5a6168;
+    gap: 16px; font-family: 'Segoe UI', sans-serif; font-size: 12px; color: #35424a;
     pointer-events: none; user-select: none;
   }
   .legend-item { display: flex; align-items: center; gap: 4px; }
   .legend-swatch { width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
   #status {
     position: absolute; bottom: 8px; left: 10px;
-    font-family: 'Segoe UI', sans-serif; font-size: 12px; color: #5a6168;
+    font-family: 'Segoe UI', sans-serif; font-size: 12px; color: #35424a;
     pointer-events: none; user-select: none;
   }
 </style>
@@ -71,11 +71,11 @@ function initScene() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, stencil: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x111417);
+  renderer.setClearColor(0xc8d1d7);
   document.body.appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color('#111417');
+  scene.background = new THREE.Color('#c8d1d7');
 
   camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 10000);
   camera.position.set(50, 40, 120);
@@ -87,7 +87,7 @@ function initScene() {
   controls.target.set(0, 0, 0);
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
 
-  const ambient = new THREE.AmbientLight(0x666666, 0.5);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambient);
   const key = new THREE.DirectionalLight(0xffffee, 1.2);
   key.position.set(1, 1, 2);
@@ -96,7 +96,7 @@ function initScene() {
   fill.position.set(-1, -0.5, -0.5);
   scene.add(fill);
 
-  const grid = new THREE.GridHelper(200, 20, '#2c3138', '#1a1d21');
+  const grid = new THREE.GridHelper(200, 20, '#87949c', '#aab4ba');
   grid.position.z = -30;
   scene.add(grid);
 
@@ -171,7 +171,8 @@ window.loadPayload = function(json) {
     });
     workpieceMesh = new THREE.Mesh(geo, mat);
     partGroup.add(workpieceMesh);
-    buildCutCylinders(d);
+    // A full-diameter tube is the cutter envelope, not removed material.
+    // Target boundary polylines show the requested edge-break width.
   }
 
   for (const poly of d.polylines) {
@@ -226,8 +227,11 @@ function buildTool(t) {
 
   if (t.kind === 'ball') {
     const ball = new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI*2, 0, Math.PI/2), cmat);
-    ball.position.z = 0;
+      new THREE.SphereGeometry(
+        radius, 32, 16, 0, Math.PI*2, Math.PI/2, Math.PI/2
+      ), cmat);
+    ball.rotation.x = Math.PI / 2;
+    ball.position.z = radius;
     toolGroup.add(ball);
     if (stickout > radius) {
       const sl = stickout - radius;
@@ -236,12 +240,6 @@ function buildTool(t) {
       sh.position.z = radius + sl * 0.5;
       toolGroup.add(sh);
     }
-    const contact = new THREE.Mesh(
-      new THREE.SphereGeometry(Math.max(0.5, radius * 0.4), 12, 8),
-      new THREE.MeshBasicMaterial({ color: '#ffd23f' })
-    );
-    contact.position.z = 0;
-    toolGroup.add(contact);
   } else {
     const tf = Math.max(0, (t.tipFlatDiameter || 0) * 0.5);
     const ha = THREE.MathUtils.degToRad(Math.max(1, Math.min(179, t.includedAngleDeg || 90)) * 0.5);
@@ -314,6 +312,7 @@ function applyPose(pose) {
     const rotAngle = THREE.MathUtils.degToRad(pose.partRotationDeg);
     const rotQuat = new THREE.Quaternion().setFromAxisAngle(sa, rotAngle);
     ref.applyQuaternion(rotQuat);
+    axis.applyQuaternion(rotQuat);
     partGroup.setRotationFromQuaternion(rotQuat);
   }
   toolGroup.position.copy(ref);

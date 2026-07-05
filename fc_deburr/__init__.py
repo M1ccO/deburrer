@@ -6,6 +6,7 @@ may be passed between layers without transferring mutable ownership.
 """
 
 from .domain.models import (
+    CutDirection,
     FeatureLoop,
     FeatureSample,
     MotionKind,
@@ -18,6 +19,7 @@ from .domain.models import (
 )
 
 __all__ = [
+    "CutDirection",
     "FeatureLoop",
     "FeatureSample",
     "MotionKind",

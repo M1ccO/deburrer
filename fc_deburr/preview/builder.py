@@ -48,7 +48,7 @@ def build_preview(
             if point.motion is MotionKind.CUT and point.contact_xyz is not None
         ),
         color="#65e572",
-        closed=True,
+        closed=feature.closed,
     )
     target_a = PreviewPolyline(
         name="Guide-face boundary",
@@ -58,7 +58,7 @@ def build_preview(
             if point.motion is MotionKind.CUT and point.target_a_xyz is not None
         ),
         color="#43e0a3",
-        closed=True,
+        closed=feature.closed,
     )
     target_b = PreviewPolyline(
         name="Other-face boundary",
@@ -68,7 +68,7 @@ def build_preview(
             if point.motion is MotionKind.CUT and point.target_b_xyz is not None
         ),
         color="#9bef5b",
-        closed=True,
+        closed=feature.closed,
     )
     cut = PreviewPolyline(
         name="Cutter reference",
@@ -302,7 +302,7 @@ def _machine_poses(result: PipelineResult, profile: MachineProfile):
                 machine_xyz_radius=machine_point.xyz_radius,
                 b_deg=machine_point.b_deg,
                 c_deg=machine_point.c_deg,
-                part_rotation_deg=-physical_c,
+                part_rotation_deg=physical_c,
             )
         )
     return tuple(poses)

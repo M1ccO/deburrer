@@ -43,6 +43,11 @@ class MotionKind(str, Enum):
     RETRACT = "retract"
 
 
+class CutDirection(str, Enum):
+    FORWARD = "forward"
+    REVERSE = "reverse"
+
+
 @dataclass(frozen=True)
 class FeatureSample:
     """One immutable sample of the source edge in FreeCAD model space."""
@@ -111,6 +116,7 @@ class Operation:
     id: str
     tool_id: str
     target_width: Optional[float] = None
+    ball_break_width: Optional[float] = None
     ball_engagement: Optional[float] = None
     feed: float = 800.0
     lead_deg: float = 0.0
@@ -128,6 +134,9 @@ class Operation:
     surface_tolerance: float = 0.01
     surface_direction: str = "auto"
     path_sample_spacing: float = 0.5
+    cut_direction: CutDirection = CutDirection.FORWARD
+    spring_passes: int = 0
+    spring_feed_fraction: float = 0.5
 
 
 @dataclass(frozen=True)

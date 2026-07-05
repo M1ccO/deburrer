@@ -184,7 +184,7 @@ label {
 #viewer-container {
   flex: 1;
   position: relative;
-  background: var(--bg);
+  background: #c8d1d7;
   min-height: 0;
 }
 
@@ -195,7 +195,7 @@ label {
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   font-size: 14px;
-  color: var(--text-dim);
+  color: #46545d;
 }
 #viewer-error { color: var(--red); }
 
@@ -206,7 +206,7 @@ label {
   gap: 14px;
   flex-wrap: wrap;
   font-size: 11px;
-  color: var(--text-dim);
+  color: #35424a;
   user-select: none;
 }
 .legend-item { display: flex; align-items: center; gap: 4px; }

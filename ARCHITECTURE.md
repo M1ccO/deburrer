@@ -85,14 +85,11 @@ The viewer (rendered by `template.html`) uses a two-group scene:
      reference (`#ffd23f`), Approach/Retract (`#ff6868`, dashed)
    - Axis vectors (B-only, `#b58cff`)
    - Markers (C0, wire center)
-   - Semi-transparent cut tubes (`#ff4d4d`, 25% opacity) — one cylinder per
-     CUT segment with the tool's diameter, showing the swept volume
 
 2. **`toolGroup`** (child of `scene`, positioned at C-rotated cutter reference,
    oriented along `tool_axis` — the C-rotated axis)
-   - Tool body: ball hemisphere (z=0 to z=radius) + shank cylinder (z=radius
-     to z=stickout), both same color (`#c58b3b`)
-   - Contact point marker (yellow sphere at z=0)
+   - Tool body: ball hemisphere from the tool tip at z=0 to its equator at
+     z=radius, plus the shank from z=radius to z=stickout
    - Tool axis arrow (purple `#b58cff`, length = stickout + max(2, diameter))
 
 This layout ensures:
@@ -107,8 +104,8 @@ This layout ensures:
 The **ball tool** body in the 3D viewer is rendered as two connected sections:
 
 - **Ball hemisphere** (lower half of a full sphere, `THREE.SphereGeometry` with
-  `thetaLength = π/2`): from local z=0 to z=radius. Center at `z=0`, dome
-  extending upward. The flat bottom at z=0 is the contact point.
+  `thetaLength = π/2`): rotated onto the tool axis and centered at local
+  z=radius, placing the spherical tool tip at z=0.
 - **Shank cylinder** (`THREE.CylinderGeometry` with `rotation.x = π/2` to
   align the default Y-axis with the tool's Z-axis): from z=radius to
   z=stickout, same diameter (`2 * radius`) and same color as the ball.
@@ -116,16 +113,13 @@ The **ball tool** body in the 3D viewer is rendered as two connected sections:
 The **chamfer tool** body consists of a tip flat disk, a conical cutting edge,
 and a shank cylinder, all with `rotation.x = π/2` to align Y→Z.
 
-A yellow contact-point marker sphere is placed at z=0 for both tool types.
-
 ## Material removal visualization
 
-Semi-transparent red tubes (`#ff4d4d`, 25% opacity, `depthWrite: false`) are
-built along every segment of the cutter reference polyline with the tool's
-diameter. These tubes are children of `partGroup`, so they rotate with C and
-show the tool's swept volume overlaid on the workpiece. No CSG or stencil
-buffer is required — the visual overlay provides a clear picture of material
-removal.
+The viewer does not claim to simulate removed stock. The former
+full-tool-diameter red tube was a cutter envelope, not a removal model, and was
+removed because it exaggerated small edge breaks. The guide/other target
+boundary polylines show the requested break width. True swept-stock removal
+belongs to the future stock-simulation pipeline.
 
 ## Web preview architecture
 
@@ -138,7 +132,7 @@ The `ui/web_preview/` subpackage contains:
 | `payload.py` | Converts `PreviewDocument` + STL path to JSON dict with Float32Arrays |
 | `stl.py` | Binary STL reader (`read_binary_stl`) |
 | `widget.py` | `WebPreviewWidget(QWidget)` — QWebEngineView, play/pause/scrub controls, local HTTP server lifecycle, `runJavaScript` for Python→JS communication |
-| `template.html` | Self-contained Three.js scene: ES module imports from `vendor/`, scene graph, tool body, cut tubes, legend, controls |
+| `template.html` | Self-contained Three.js scene: ES module imports from `vendor/`, scene graph, tool body, target boundaries, legend, controls |
 | `vendor/` | Vendored Three.js r161 (`three.module.min.js`) and patched `OrbitControls.js` (imports changed from bare `'three'` to `'./three.module.min.js'`) |
 
 **Communication flow**:
@@ -173,7 +167,9 @@ Wire deburring runs through these explicit stages:
 `MotionMode` owns rotary freedom explicitly:
 
 - **`indexed_3_plus_2`**: B and C are constant for the complete cutting loop.
-  C0 is computed from the first tool axis. Both are held fixed.
+  Auto-indexed ball operations choose a cardinal radial B0 or axial B±90
+  posture and hold it fixed. Manual B/C remains available. Because spherical
+  contact is owned by the ball center, local lead and tilt are ignored.
 - **`simultaneous_4_plus_1`**: C is constant (locked to the first tool axis
   azimuth) and B may vary. Suitable when C-axis rotation is undesirable but
   tilt variation is needed (e.g. cylindrical contours where B should follow
@@ -260,7 +256,9 @@ remains provisional and must not be interpreted as collision-cleared.
   not part of the new workflow.
 - The selected start vertex emits cutting `C0`; C is then continuously
   unwrapped.
-- Sharp source-wire or face-normal discontinuities block generation.
+- Sharp source-wire or face-normal discontinuities block orientation-sensitive
+  strategies. Indexed ball operations retain them as review warnings because
+  the fixed tool axis does not change spherical contact.
 - Invalid B/C limits or steps block posting.
 - Approach and retract are explicit path segments. There is no bounding-box
   center plunge and no automatic center-closing move.

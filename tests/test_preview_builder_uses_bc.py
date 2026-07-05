@@ -87,7 +87,7 @@ def test_part_rotation_matches_physical_c():
     physical_c = (
         45.0 - profile.c_zero_offset_deg
     ) / profile.c_axis_sign
-    assert pose.part_rotation_deg == pytest.approx(-physical_c)
+    assert pose.part_rotation_deg == pytest.approx(physical_c)
 
 
 def test_multiple_points_each_get_correct_axes():
@@ -131,4 +131,4 @@ def test_multiple_points_each_get_correct_axes():
         physical_c = (
             machine.c_deg - profile.c_zero_offset_deg
         ) / profile.c_axis_sign
-        assert pose.part_rotation_deg == pytest.approx(-physical_c)
+        assert pose.part_rotation_deg == pytest.approx(physical_c)

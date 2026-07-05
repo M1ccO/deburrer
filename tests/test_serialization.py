@@ -1,6 +1,11 @@
 from dataclasses import replace
 
-from fc_deburr.domain.models import FacePatch, FaceRegion
+from fc_deburr.domain.models import (
+    FacePatch,
+    FaceRegion,
+    FeatureLoop,
+    FeatureSample,
+)
 from fc_deburr.domain.serialization import (
     face_region_from_document,
     face_region_to_document,
@@ -53,3 +58,26 @@ def test_face_region_round_trip():
     restored = face_region_from_document(face_region_to_document(region))
 
     assert restored == region
+
+
+def test_two_sample_open_feature_round_trip():
+    sample = FeatureSample(
+        position=(0.0, 0.0, 0.0),
+        tangent=(1.0, 0.0, 0.0),
+        guide_normal=(0.0, 1.0, 0.0),
+        other_normal=(0.0, 0.0, 1.0),
+    )
+    feature = FeatureLoop(
+        id="single-open-edge",
+        samples=(
+            sample,
+            replace(sample, position=(1.0, 0.0, 0.0)),
+        ),
+        closed=False,
+    )
+
+    restored = feature_loop_from_document(
+        feature_loop_to_document(feature)
+    )
+
+    assert restored == feature

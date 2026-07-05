@@ -24,6 +24,7 @@ class TriMesh:
     vertices: Tuple[Vec3, ...] = ()
     triangles: Tuple[Tuple[int, int, int], ...] = ()
     normals: Tuple[Vec3, ...] = ()
+    triangle_face_indices: Tuple[int, ...] = ()
 
 
 @dataclass
@@ -76,10 +77,11 @@ def tessellate(shape, tolerance_mm: float = 0.1) -> TriMesh:
     vertices = []
     normals = []
     triangles = []
+    triangle_face_indices = []
     vertex_map = {}
-    v_offset = 0
 
     fe = TopExp_Explorer(raw, TopAbs_FACE)
+    face_index = 0
     while fe.More():
         face = TopoDS.Face_s(fe.Current())
         loc = TopLoc_Location()
@@ -87,6 +89,7 @@ def tessellate(shape, tolerance_mm: float = 0.1) -> TriMesh:
 
         if triangulation is None or triangulation.NbTriangles() == 0:
             fe.Next()
+            face_index += 1
             continue
 
         n_nodes = triangulation.NbNodes()
@@ -115,12 +118,14 @@ def tessellate(shape, tolerance_mm: float = 0.1) -> TriMesh:
             b = remap[t.Value(2) - 1]
             c = remap[t.Value(3) - 1]
             triangles.append((a, b, c))
+            triangle_face_indices.append(face_index)
 
         # Add normals placeholder (will be computed)
         for _ in local_verts:
             normals.append((0.0, 0.0, 1.0))
 
         fe.Next()
+        face_index += 1
 
     # Compute per-face normals
     normals = _compute_normals(vertices, triangles)
@@ -129,6 +134,7 @@ def tessellate(shape, tolerance_mm: float = 0.1) -> TriMesh:
         vertices=tuple(vertices),
         triangles=tuple(triangles),
         normals=tuple(normals),
+        triangle_face_indices=tuple(triangle_face_indices),
     )
 
 
@@ -149,6 +155,15 @@ def tessellate_flat(shape, tolerance_mm: float = 0.1):
     for n in mesh.normals:
         nflat.extend(n)
     return vflat, nflat, iflat
+
+
+def tessellate_selectable_flat(shape, tolerance_mm: float = 0.1):
+    """Return viewer mesh arrays plus one OCCT face index per triangle."""
+    mesh = tessellate(shape, tolerance_mm)
+    vflat = [coordinate for vertex in mesh.vertices for coordinate in vertex]
+    nflat = [coordinate for normal in mesh.normals for coordinate in normal]
+    iflat = [index for triangle in mesh.triangles for index in triangle]
+    return vflat, nflat, iflat, list(mesh.triangle_face_indices)
 
 
 def _compute_normals(vertices, triangles):

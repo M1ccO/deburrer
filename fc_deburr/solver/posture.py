@@ -48,10 +48,17 @@ def realize_motion_mode(
             or operation.indexed_b_deg is None
             or operation.indexed_c_deg is None
         ):
-            average_axis = _average_axis(points)
-            indexed_b, indexed_c = bc_from_axis_model(
-                average_axis, profile
-            )
+            if tool.kind is ToolKind.BALL:
+                indexed_b, indexed_c = _cardinal_ball_posture(
+                    points,
+                    tool,
+                    profile,
+                )
+            else:
+                average_axis = _average_axis(points)
+                indexed_b, indexed_c = bc_from_axis_model(
+                    average_axis, profile
+                )
         else:
             indexed_b = operation.indexed_b_deg
             indexed_c = operation.indexed_c_deg
@@ -210,6 +217,95 @@ def _average_axis(points):
         for axis in range(3)
     )
     return normalize(vector, "average indexed tool posture")
+
+
+def _cardinal_ball_posture(points, tool, profile):
+    """Choose a simple radial or axial indexed posture for a ball cutter.
+
+    Ball contact is controlled by the sphere center, so the tool axis can snap
+    to a machine-friendly B0/B±90 posture without moving that center.
+    """
+    preferences = tuple(
+        _ball_contact_preference(point, tool)
+        for point in points
+    )
+    vector = tuple(
+        sum(preference[axis] for preference in preferences)
+        for axis in range(3)
+    )
+    if sum(component * component for component in vector) < 1.0e-18:
+        preferred_axis = preferences[0]
+    else:
+        preferred_axis = normalize(vector)
+    _, preferred_c = bc_from_axis_model(preferred_axis, profile)
+
+    candidates = []
+    for order, physical_b in enumerate((0.0, -90.0, 90.0)):
+        b_deg = (
+            profile.b_zero_offset_deg
+            + profile.b_branch_sign * physical_b
+        )
+        if not profile.b_min_deg <= b_deg <= profile.b_max_deg:
+            continue
+        c_deg = preferred_c if physical_b == 0.0 else profile.c_zero_offset_deg
+        c_deg = _equivalent_c_within_limits(c_deg, profile)
+        if c_deg is None:
+            continue
+        axis = axis_model_from_bc(b_deg, c_deg, profile)
+        alignment_cost = sum(
+            1.0 - max(-1.0, min(1.0, dot(axis, preference)))
+            for preference in preferences
+        )
+        tangent_cost = sum(
+            abs(dot(axis, normalize(point.tangent)))
+            for point in points
+            if point.tangent is not None
+        )
+        candidates.append(
+            (
+                alignment_cost + tangent_cost * 0.25,
+                order,
+                b_deg,
+                c_deg,
+            )
+        )
+    if not candidates:
+        raise GeometryError(
+            "No B0/B±90 indexed ball posture is inside machine limits"
+        )
+    _, _, indexed_b, indexed_c = min(candidates)
+    return indexed_b, indexed_c
+
+
+def _ball_contact_preference(point, tool):
+    if point.contact_xyz is None:
+        return normalize(point.tool_axis)
+    radius = tool.diameter * 0.5
+    center = add(point.xyz, scale(point.tool_axis, radius))
+    direction = sub(center, point.contact_xyz)
+    try:
+        return normalize(direction, "ball contact preference")
+    except GeometryError:
+        return normalize(point.tool_axis)
+
+
+def _equivalent_c_within_limits(c_deg, profile):
+    if profile.c_min_deg is None and profile.c_max_deg is None:
+        return c_deg
+    options = (c_deg - 360.0, c_deg, c_deg + 360.0)
+    feasible = [
+        value
+        for value in options
+        if (
+            profile.c_min_deg is None or value >= profile.c_min_deg
+        )
+        and (
+            profile.c_max_deg is None or value <= profile.c_max_deg
+        )
+    ]
+    if not feasible:
+        return None
+    return min(feasible, key=lambda value: abs(value - c_deg))
 
 
 def _mean_c(points, profile):

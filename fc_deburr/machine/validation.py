@@ -17,52 +17,73 @@ from .profiles import MachineProfile
 
 
 def validate_feature(
-    loop: FeatureLoop, profile: MachineProfile
+    loop: FeatureLoop,
+    profile: MachineProfile,
+    discontinuities_are_warnings: bool = False,
 ) -> ValidationReport:
     issues = []
-    if not loop.closed:
-        issues.append(ValidationIssue("feature.open", "Feature loop is not closed"))
-    if len(loop.samples) < 3:
+    minimum_samples = 3 if loop.closed else 2
+    if len(loop.samples) < minimum_samples:
         issues.append(
-            ValidationIssue("feature.too_short", "Feature requires at least 3 samples")
+            ValidationIssue(
+                "feature.too_short",
+                (
+                    "Closed feature requires at least 3 samples"
+                    if loop.closed
+                    else "Open feature requires at least 2 samples"
+                ),
+            )
         )
         return ValidationReport(tuple(issues))
 
     count = len(loop.samples)
     for index, current in enumerate(loop.samples):
-        previous_sample = loop.samples[(index - 1) % count]
-        following = loop.samples[(index + 1) % count]
-        incoming_chord = sub(current.position, previous_sample.position)
-        outgoing_chord = sub(following.position, current.position)
-        chord_jump = angle_deg(incoming_chord, outgoing_chord)
-        if chord_jump > profile.max_tangent_jump_deg:
-            issues.append(
-                ValidationIssue(
-                    "feature.chord_jump",
-                    "Source wire changes %.2f degrees at a sample" % chord_jump,
-                    index,
+        previous_sample = (
+            loop.samples[index - 1]
+            if index > 0
+            else (loop.samples[-1] if loop.closed else None)
+        )
+        following = (
+            loop.samples[index + 1]
+            if index + 1 < count
+            else (loop.samples[0] if loop.closed else None)
+        )
+        if previous_sample is not None and following is not None:
+            incoming_chord = sub(current.position, previous_sample.position)
+            outgoing_chord = sub(following.position, current.position)
+            chord_jump = angle_deg(incoming_chord, outgoing_chord)
+            if chord_jump > profile.max_tangent_jump_deg:
+                issues.append(
+                    ValidationIssue(
+                        "feature.chord_jump",
+                        "Source wire changes %.2f degrees at a sample" % chord_jump,
+                        index,
+                        is_error=not discontinuities_are_warnings,
+                    )
                 )
-            )
-        tangent_jump = angle_deg(current.tangent, following.tangent)
-        if tangent_jump > profile.max_tangent_jump_deg:
-            issues.append(
-                ValidationIssue(
-                    "feature.tangent_jump",
-                    "Tangent changes %.2f degrees" % tangent_jump,
-                    index,
+        if following is not None:
+            tangent_jump = angle_deg(current.tangent, following.tangent)
+            if tangent_jump > profile.max_tangent_jump_deg:
+                issues.append(
+                    ValidationIssue(
+                        "feature.tangent_jump",
+                        "Tangent changes %.2f degrees" % tangent_jump,
+                        index,
+                        is_error=not discontinuities_are_warnings,
+                    )
                 )
-            )
-        guide_jump = angle_deg(current.guide_normal, following.guide_normal)
-        other_jump = angle_deg(current.other_normal, following.other_normal)
-        if max(guide_jump, other_jump) > profile.max_normal_jump_deg:
-            issues.append(
-                ValidationIssue(
-                    "feature.normal_jump",
-                    "Face normal changes %.2f degrees"
-                    % max(guide_jump, other_jump),
-                    index,
+            guide_jump = angle_deg(current.guide_normal, following.guide_normal)
+            other_jump = angle_deg(current.other_normal, following.other_normal)
+            if max(guide_jump, other_jump) > profile.max_normal_jump_deg:
+                issues.append(
+                    ValidationIssue(
+                        "feature.normal_jump",
+                        "Face normal changes %.2f degrees"
+                        % max(guide_jump, other_jump),
+                        index,
+                        is_error=not discontinuities_are_warnings,
+                    )
                 )
-            )
         tangent = normalize(current.tangent)
         if abs(dot(tangent, normalize(current.guide_normal))) > 1.0e-3:
             issues.append(

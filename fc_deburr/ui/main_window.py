@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         op_box = QGroupBox("Operation — owns requested result")
         op_form = QFormLayout(op_box)
         self.chamfer_width = self._double(0.5, 0.001, 100.0, 3)
-        self.ball_engagement = self._double(0.25, 0.001, 100.0, 3)
+        self.ball_break_width = self._double(0.25, 0.001, 100.0, 3)
         self.feed = self._double(800.0, 0.001, 100000.0, 3)
         self.lead = self._double(0.0, -180.0, 180.0, 3)
         self.tilt = self._double(0.0, -90.0, 90.0, 3)
@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
         self.indexed_b = self._double(0.0, -120.0, 120.0, 3)
         self.indexed_c = self._double(0.0, -9999.0, 9999.0, 3)
         op_form.addRow("Equal chamfer width", self.chamfer_width)
-        op_form.addRow("Ball engagement", self.ball_engagement)
+        op_form.addRow("Rounded break width", self.ball_break_width)
         op_form.addRow("Feed", self.feed)
         op_form.addRow("Lead angle", self.lead)
         op_form.addRow("Tilt angle", self.tilt)
@@ -422,8 +422,9 @@ class MainWindow(QMainWindow):
                 if tool.kind is ToolKind.CHAMFER
                 else None
             ),
-            ball_engagement=(
-                self.ball_engagement.value()
+            ball_engagement=None,
+            ball_break_width=(
+                self.ball_break_width.value()
                 if tool.kind is ToolKind.BALL
                 else None
             ),
@@ -479,7 +480,7 @@ class MainWindow(QMainWindow):
             self.chamfer_width,
         ):
             widget.setEnabled(chamfer)
-        self.ball_engagement.setEnabled(not chamfer)
+        self.ball_break_width.setEnabled(not chamfer)
         self.tilt.setEnabled(not chamfer)
         self.tilt.setToolTip(
             "Ball posture tilt"
@@ -490,10 +491,34 @@ class MainWindow(QMainWindow):
             self.tool_id.setText("C90")
         elif not chamfer and self.tool_id.text().startswith("C"):
             self.tool_id.setText("B6")
+        self._motion_mode_changed()
 
     def _motion_mode_changed(self, *args):
         mode = MotionMode(self.motion_mode.currentData())
         automatic = self.auto_index.isChecked()
+        ball = ToolKind(self.tool_kind.currentData()) is ToolKind.BALL
+        cardinal_ball = ball and mode is MotionMode.INDEXED_3_PLUS_2
+        self.lead.setEnabled(not cardinal_ball)
+        self.tilt.setEnabled(ball and not cardinal_ball)
+        if cardinal_ball:
+            self.lead.setValue(0.0)
+            self.tilt.setValue(0.0)
+        posture_tip = (
+            "Indexed ball mode uses fixed B0/B±90; local lead and tilt "
+            "do not apply"
+            if cardinal_ball
+            else ""
+        )
+        self.lead.setToolTip(posture_tip)
+        self.tilt.setToolTip(
+            posture_tip
+            if cardinal_ball
+            else (
+                "Ball posture tilt"
+                if ball
+                else "Disabled: cone tilt would change the flat chamfer"
+            )
+        )
         self.auto_index.setEnabled(
             mode is not MotionMode.SIMULTANEOUS_5_AXIS
         )
@@ -567,7 +592,7 @@ class MainWindow(QMainWindow):
             "radial_correction": self.radial_correction.value(),
             "axial_correction": self.axial_correction.value(),
             "chamfer_width": self.chamfer_width.value(),
-            "ball_engagement": self.ball_engagement.value(),
+            "ball_break_width": self.ball_break_width.value(),
             "feed": self.feed.value(),
             "lead": self.lead.value(),
             "tilt": self.tilt.value(),
@@ -619,7 +644,7 @@ class MainWindow(QMainWindow):
             "radial_correction": self.radial_correction,
             "axial_correction": self.axial_correction,
             "chamfer_width": self.chamfer_width,
-            "ball_engagement": self.ball_engagement,
+            "ball_break_width": self.ball_break_width,
             "feed": self.feed,
             "lead": self.lead,
             "tilt": self.tilt,
@@ -638,6 +663,11 @@ class MainWindow(QMainWindow):
         for key, widget in numeric.items():
             if key in value:
                 widget.setValue(value[key])
+        if (
+            "ball_break_width" not in value
+            and "ball_engagement" in value
+        ):
+            self.ball_break_width.setValue(value["ball_engagement"])
         if "work_offset" in value:
             self.work_offset.setCurrentText(value["work_offset"])
         if "positioning_mode" in value:

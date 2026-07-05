@@ -25,6 +25,9 @@ class JobSession:
     operation_json: Optional[dict] = None
     pipeline_result: Optional[dict] = None
     model_data: Optional[dict] = None
+    step_content: Optional[bytes] = None
+    step_filename: str = ""
+    topology_selection: Optional[dict] = None
     fixture_data: Optional[dict] = None
     stock_data: Optional[dict] = None
     collision_status: Optional[dict] = None

@@ -23,6 +23,21 @@
       </div>
       <div id="feature-info" class="info-box">No part loaded — upload STEP or JSON</div>
       <div id="model-info" class="info-box" style="margin-top:4px"></div>
+      <div id="topology-selection" style="display:none; margin-top:8px">
+        <label>Pick from model
+          <select id="selection-mode" class="input" onchange="changeSelectionMode(this.value)">
+            <option value="face">Face (surface finishing)</option>
+            <option value="edge">Edge / edge chain</option>
+          </select>
+        </label>
+        <p class="section-hint">
+          Click the visible STEP model. Hold Ctrl to select multiple connected edges.
+        </p>
+        <div id="selection-info" class="info-box">Click a model face to select it.</div>
+        <button onclick="useTopologySelection()" class="btn btn-secondary" style="width:100%">
+          Use Selected Feature
+        </button>
+      </div>
       <input type="hidden" id="session-id" value="">
     </section>
 
@@ -93,7 +108,8 @@
           </select>
         </label>
         <label>Motion mode
-          <select name="motion_mode" class="input">
+          <select name="motion_mode" class="input" id="motion-mode-select"
+                  onchange="syncIndexedBallControls()">
             <option value="indexed_3_plus_2">3+2 Indexed</option>
             <option value="simultaneous_4_plus_1">4+1 (C fixed)</option>
             <option value="simultaneous_5_axis">5-Axis Simultaneous</option>
@@ -113,9 +129,12 @@
           </label>
         </div>
         <div id="ball-op-fields" style="display:none">
-          <label>Ball engagement (mm)
-            <input name="ball_engagement" type="number" value="0.3" step="0.05" class="input">
+          <label>Rounded break width on each face (mm)
+            <input name="ball_break_width" type="number" value="0.3" step="0.05" class="input">
           </label>
+          <p class="section-hint">
+            Measured from the original edge along both adjoining faces.
+          </p>
         </div>
         <div id="face-op-fields" style="display:none">
           <div class="form-row">
@@ -137,12 +156,16 @@
         </div>
         <div class="form-row">
           <label>Lead (°)
-            <input name="lead_deg" type="number" value="0" step="1" class="input">
+            <input name="lead_deg" id="lead-deg-input" type="number" value="0" step="1" class="input">
           </label>
           <label>Tilt (°)
-            <input name="tilt_deg" type="number" value="0" step="1" class="input">
+            <input name="tilt_deg" id="tilt-deg-input" type="number" value="0" step="1" class="input">
           </label>
         </div>
+        <p id="indexed-ball-hint" class="section-hint" style="display:none">
+          Indexed ball mode uses a fixed cardinal B0 or B±90 posture;
+          local lead and tilt do not apply.
+        </p>
         <div class="form-row">
           <label>Lead in (mm)
             <input name="lead_in_length" type="number" value="2" step="0.5" class="input">
@@ -151,6 +174,20 @@
             <input name="lead_out_length" type="number" value="2" step="0.5" class="input">
           </label>
         </div>
+        <div class="form-row">
+          <label>Cut direction
+            <select name="cut_direction" class="input">
+              <option value="forward">Forward</option>
+              <option value="reverse">Reverse</option>
+            </select>
+          </label>
+          <label>Spring passes
+            <input name="spring_passes" type="number" value="0" min="0" max="10" step="1" class="input">
+          </label>
+        </div>
+        <label>Spring-pass feed factor
+          <input name="spring_feed_fraction" type="number" value="0.5" min="0.01" max="1" step="0.05" class="input">
+        </label>
         <label class="checkbox-label">
           <input type="checkbox" name="flip_side"> Flip deburr side
         </label>
@@ -245,6 +282,21 @@ function getSid() {
   return document.getElementById('session-id').value;
 }
 
+async function readJsonResponse(response, context) {
+  const text = await response.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch (_error) {
+    const summary = text.trim().slice(0, 240) || 'empty response';
+    throw new Error(`${context} returned HTTP ${response.status}: ${summary}`);
+  }
+  if (!response.ok) {
+    throw new Error(payload.detail || `${context} failed with HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 async function uploadFeature() {
   const fileEl = document.getElementById('feature-file');
   const file = fileEl.files[0];
@@ -261,27 +313,30 @@ async function uploadFeature() {
     if (ext === 'step' || ext === 'stp') {
       // Create session first, then upload STEP
       const resp1 = await fetch('/api/jobs', { method: 'POST', body: form });
-      const data1 = await resp1.json();
+      const data1 = await readJsonResponse(resp1, 'Session creation');
       document.getElementById('session-id').value = data1.id;
       sessionId = data1.id;
 
       const resp2 = await fetch('/api/jobs/' + data1.id + '/step', { method: 'POST', body: form });
-      if (!resp2.ok) { const err = await resp2.json(); throw new Error(err.detail); }
-      const data2 = await resp2.json();
+      const data2 = await readJsonResponse(resp2, 'STEP import');
       const fi = data2.feature;
       document.getElementById('feature-info').innerHTML =
         `STEP: ${fi.id} | Type: ${fi.type} | Closed: ${fi.closed} | Samples: ${fi.sample_count}`;
-      document.getElementById('model-info').textContent = '3D model tessellated';
-      loadModelMesh(data1.id);
+      document.getElementById('model-info').textContent =
+        `3D model: ${data2.topology.face_count} faces, ${data2.topology.edge_count} edges`;
+      document.getElementById('topology-selection').style.display = 'block';
+      changeSelectionMode(document.getElementById('selection-mode').value);
+      await fetchModelMesh(data1.id);
       updateStatus(data2.status);
     } else if (ext === 'json') {
       const resp = await fetch('/api/jobs', { method: 'POST', body: form });
-      const data = await resp.json();
+      const data = await readJsonResponse(resp, 'Feature JSON import');
       document.getElementById('session-id').value = data.id;
       sessionId = data.id;
       const fi = data.feature;
       document.getElementById('feature-info').innerHTML =
         `JSON: ${fi.type} | Closed: ${fi.closed} | Samples: ${fi.sample_count || '?'}`;
+      document.getElementById('topology-selection').style.display = 'none';
       updateStatus(data.status);
     } else {
       alert('Unsupported file. Upload .step or .json');
@@ -341,12 +396,78 @@ async function uploadAuxFiles() {
   document.getElementById('aux-info').textContent = messages.join(' | ');
 }
 
-async function loadModelMesh(sid) {
+async function fetchModelMesh(sid) {
   try {
     const resp = await fetch('/api/jobs/' + sid + '/model_data');
-    const mesh = await resp.json();
-    if (window.loadModelMesh) window.loadModelMesh(mesh);
-  } catch(e) {}
+    const mesh = await readJsonResponse(resp, 'Model preview');
+    if (!window.renderModelMesh) throw new Error('3D viewer is not ready');
+    window.renderModelMesh(mesh);
+  } catch(e) {
+    document.getElementById('model-info').textContent =
+      'Model preview error: ' + e.message;
+  }
+}
+
+function changeSelectionMode(mode) {
+  if (window.setTopologySelectionMode) {
+    window.setTopologySelectionMode(mode);
+  }
+  document.getElementById('selection-info').textContent =
+    mode === 'edge'
+      ? 'Click an edge. Hold Ctrl to add connected edges.'
+      : 'Click a face to use its boundary as the deburr feature.';
+}
+
+window.onTopologySelectionChanged = function(_selection, detail) {
+  document.getElementById('selection-info').textContent = detail;
+};
+
+async function useTopologySelection() {
+  const sid = getSid();
+  if (!sid) { alert('Load a STEP model first.'); return; }
+  if (!window.getTopologySelection) {
+    document.getElementById('selection-info').textContent = '3D viewer is not ready.';
+    return;
+  }
+  const selected = window.getTopologySelection();
+  const body = {kind: selected.kind, spacing: 0.5};
+  if (selected.kind === 'face') {
+    if (selected.faceIndex === null) {
+      document.getElementById('selection-info').textContent = 'Click one model face first.';
+      return;
+    }
+    body.face_index = selected.faceIndex;
+  } else {
+    if (!selected.edgeIds.length) {
+      document.getElementById('selection-info').textContent =
+        'Click at least one model edge first.';
+      return;
+    }
+    body.edge_ids = selected.edgeIds;
+  }
+  try {
+    const response = await fetch('/api/jobs/' + sid + '/selection', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await readJsonResponse(response, 'Feature selection');
+    const feature = data.feature;
+    const operationType = document.getElementById('op-type-select');
+    operationType.value = data.selection.kind === 'face' ? 'face' : 'edge';
+    onOpTypeChange(operationType);
+    document.getElementById('feature-info').textContent =
+      `Selected ${data.selection.kind}: ${feature.sample_count} samples, ` +
+      `${feature.closed ? 'closed' : 'open'} path`;
+    document.getElementById('selection-info').textContent =
+      'Selection applied. Configure the tool and operation, then calculate.';
+    document.getElementById('tab-nc').textContent =
+      'Recalculate for this selected feature.';
+    updateStatus(data.status);
+  } catch (error) {
+    document.getElementById('selection-info').textContent = 'Error: ' + error.message;
+    updateStatus('error');
+  }
 }
 
 async function submitTool(event) {
@@ -381,7 +502,9 @@ async function submitOp(event) {
     });
     const result = await resp.json();
     document.getElementById('op-info').innerHTML =
-      `Mode: ${result.operation.motion_mode} | Feed: ${result.operation.feed}mm/min`;
+      `Mode: ${result.operation.motion_mode} | Feed: ${result.operation.feed}mm/min | ` +
+      `Direction: ${result.operation.cut_direction || 'forward'} | ` +
+      `Spring passes: ${result.operation.spring_passes || 0}`;
     updateStatus(result.status);
   } catch(e) {
     document.getElementById('op-info').textContent = 'Error: ' + e.message;
@@ -486,6 +609,23 @@ function onToolKindChange(sel) {
     chamferOpFields.style.display = 'none';
     ballOpFields.style.display = 'block';
   }
+  syncIndexedBallControls();
+}
+
+function syncIndexedBallControls() {
+  const toolKind = document.querySelector('select[name="kind"]').value;
+  const motionMode = document.getElementById('motion-mode-select').value;
+  const locked = toolKind === 'ball' && motionMode === 'indexed_3_plus_2';
+  const lead = document.getElementById('lead-deg-input');
+  const tilt = document.getElementById('tilt-deg-input');
+  lead.disabled = locked;
+  tilt.disabled = locked;
+  if (locked) {
+    lead.value = 0;
+    tilt.value = 0;
+  }
+  document.getElementById('indexed-ball-hint').style.display =
+    locked ? 'block' : 'none';
 }
 onToolKindChange(document.querySelector('select[name="kind"]'));
 

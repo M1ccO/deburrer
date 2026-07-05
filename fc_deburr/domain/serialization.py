@@ -47,8 +47,16 @@ def feature_loop_from_document(document: Dict[str, Any]) -> FeatureLoop:
     if not isinstance(data, dict):
         raise ValueError("Missing feature_loop object")
     samples_data = data.get("samples")
-    if not isinstance(samples_data, list) or len(samples_data) < 3:
-        raise ValueError("A feature loop requires at least three samples")
+    closed = bool(data.get("closed", False))
+    minimum_samples = 3 if closed else 2
+    if not isinstance(samples_data, list) or len(samples_data) < minimum_samples:
+        raise ValueError(
+            (
+                "A closed feature loop requires at least three samples"
+                if closed
+                else "An open feature path requires at least two samples"
+            )
+        )
 
     samples = tuple(
         FeatureSample(
@@ -63,7 +71,7 @@ def feature_loop_from_document(document: Dict[str, Any]) -> FeatureLoop:
     return FeatureLoop(
         id=str(data["id"]),
         samples=samples,
-        closed=bool(data["closed"]),
+        closed=closed,
         source_kind=FeatureSourceKind(data.get("source_kind", "wire")),
         center_xyz=(
             _vec(data, "center_xyz")

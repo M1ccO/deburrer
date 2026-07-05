@@ -5,6 +5,16 @@ let scene, camera, renderer, controls;
 let partGroup, toolGroup, modelGroup;
 let workpieceMesh = null;
 let standaloneModel = null;
+let standaloneModelData = null;
+let selectableEdges = [];
+let selectionOverlay = null;
+let selectionMode = 'face';
+let selectedFaceIndex = null;
+let selectedEdgeIds = new Set();
+let modelSpan = 100;
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let pointerDown = null;
 let wirePolylines = [];
 let vertexMarkers = [];
 let vectorLines = [];
@@ -31,10 +41,10 @@ function initScene() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, canvas });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(canvas.parentElement.clientWidth, canvas.parentElement.clientHeight);
-  renderer.setClearColor(0x111417);
+  renderer.setClearColor(0xc8d1d7);
 
   scene = new THREE.Scene();
-  scene.background = new THREE.Color('#111417');
+  scene.background = new THREE.Color('#c8d1d7');
 
   camera = new THREE.PerspectiveCamera(45, canvas.parentElement.clientWidth / canvas.parentElement.clientHeight, 0.5, 10000);
   camera.position.set(50, 40, 120);
@@ -46,7 +56,7 @@ function initScene() {
   controls.target.set(0, 0, 0);
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
 
-  const ambient = new THREE.AmbientLight(0x666666, 0.5);
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambient);
   const key = new THREE.DirectionalLight(0xffffee, 1.2);
   key.position.set(1, 1, 2);
@@ -55,7 +65,7 @@ function initScene() {
   fill.position.set(-1, -0.5, -0.5);
   scene.add(fill);
 
-  const grid = new THREE.GridHelper(200, 20, '#2c3138', '#1a1d21');
+  const grid = new THREE.GridHelper(200, 20, '#87949c', '#aab4ba');
   grid.position.z = -30;
   scene.add(grid);
 
@@ -72,6 +82,8 @@ function initScene() {
   scene.add(toolGroup);
 
   window.addEventListener('resize', onResize);
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointerup', onPointerUp);
 
   canvas.style.display = 'block';
   loadingEl.style.display = 'none';
@@ -115,12 +127,18 @@ function clearModel() {
     for (const c of [...modelGroup.children]) modelGroup.remove(c);
   }
   standaloneModel = null;
+  standaloneModelData = null;
+  selectableEdges = [];
+  selectionOverlay = null;
+  selectedFaceIndex = null;
+  selectedEdgeIds.clear();
 }
 
-function loadModelMesh(data) {
+function renderModelMesh(data) {
   if (!modelGroup) return;
   clearModel();
   if (!data || !data.vertices || !data.indices) return;
+  standaloneModelData = data;
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(data.vertices, 3));
@@ -132,9 +150,30 @@ function loadModelMesh(data) {
     specular: '#222222',
     shininess: 25,
     flatShading: true,
+    side: THREE.DoubleSide,
   });
   standaloneModel = new THREE.Mesh(geo, mat);
+  standaloneModel.userData.pickKind = 'face';
   modelGroup.add(standaloneModel);
+
+  const topology = data.topology || {};
+  for (const edge of (topology.edges || [])) {
+    if (!edge.points || edge.points.length < 2) continue;
+    const edgeGeometry = new THREE.BufferGeometry().setFromPoints(
+      edge.points.map(point => new THREE.Vector3(point[0], point[1], point[2]))
+    );
+    const edgeMaterial = new THREE.LineBasicMaterial({
+      color: '#1f2830',
+      transparent: true,
+      opacity: 0.7,
+    });
+    const edgeLine = new THREE.Line(edgeGeometry, edgeMaterial);
+    edgeLine.userData.pickKind = 'edge';
+    edgeLine.userData.edgeId = edge.id;
+    edgeLine.userData.edgeIndex = edge.index;
+    modelGroup.add(edgeLine);
+    selectableEdges.push(edgeLine);
+  }
 
   geo.computeBoundingBox();
   const box = geo.boundingBox;
@@ -147,6 +186,7 @@ function loadModelMesh(data) {
     box.max.y - box.min.y,
     box.max.z - box.min.z
   );
+  modelSpan = Math.max(span, 1);
   const dist = Math.max(30, span * 2.0);
   camera.position.set(cx + dist * 0.6, cy - dist * 0.5, cz + dist * 0.6);
   controls.update();
@@ -155,6 +195,10 @@ function loadModelMesh(data) {
   loadingEl.style.display = 'none';
   legendEl.style.display = 'flex';
   errorEl.style.display = 'none';
+  modelGroup.visible = true;
+  partGroup.visible = false;
+  toolGroup.visible = false;
+  notifyTopologySelection();
 }
 
 function loadPreviewPayload(d) {
@@ -162,6 +206,9 @@ function loadPreviewPayload(d) {
     clearAll();
     if (!d) { showError('Payload is empty'); return; }
     payloadData = d;
+    modelGroup.visible = !d.workpiece;
+    partGroup.visible = true;
+    toolGroup.visible = true;
 
     if (d.bounds) {
       const lo = d.bounds[0], hi = d.bounds[1];
@@ -181,11 +228,13 @@ function loadPreviewPayload(d) {
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(d.workpiece.normals, 3));
       geo.computeVertexNormals();
       const mat = new THREE.MeshPhongMaterial({
-        color: '#526474', specular: '#222222', shininess: 25, flatShading: true,
+        color: '#526474', specular: '#222222', shininess: 25,
+        flatShading: true, side: THREE.DoubleSide,
       });
       workpieceMesh = new THREE.Mesh(geo, mat);
       partGroup.add(workpieceMesh);
-      buildCutCylinders(d);
+      // The old full-diameter tube represented the cutter envelope, not
+      // removed material, and exaggerated a small rounded edge break.
     }
 
     for (const poly of d.polylines) {
@@ -233,6 +282,136 @@ function loadPreviewPayload(d) {
   }
 }
 
+function onPointerDown(event) {
+  pointerDown = { x: event.clientX, y: event.clientY };
+}
+
+function onPointerUp(event) {
+  if (!pointerDown || !standaloneModel || !modelGroup.visible) return;
+  const distance = Math.hypot(
+    event.clientX - pointerDown.x,
+    event.clientY - pointerDown.y
+  );
+  pointerDown = null;
+  if (distance > 4) return;
+  pickTopology(event, event.ctrlKey || event.metaKey);
+}
+
+function updatePointer(event) {
+  const rect = canvas.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+}
+
+function pickTopology(event, additive) {
+  updatePointer(event);
+  if (selectionMode === 'edge') {
+    raycaster.params.Line.threshold = Math.max(0.25, modelSpan * 0.008);
+    const hits = raycaster.intersectObjects(selectableEdges, false);
+    if (!hits.length) return;
+    const edgeId = hits[0].object.userData.edgeId;
+    if (!additive) selectedEdgeIds.clear();
+    if (selectedEdgeIds.has(edgeId) && additive) {
+      selectedEdgeIds.delete(edgeId);
+    } else {
+      selectedEdgeIds.add(edgeId);
+    }
+    selectedFaceIndex = null;
+  } else {
+    const hits = raycaster.intersectObject(standaloneModel, false);
+    if (!hits.length) return;
+    const triangleIndex = hits[0].faceIndex;
+    const mapping = standaloneModelData.triangle_face_indices || [];
+    selectedFaceIndex = mapping[triangleIndex] ?? null;
+    selectedEdgeIds.clear();
+  }
+  updateSelectionHighlight();
+  notifyTopologySelection();
+}
+
+function updateSelectionHighlight() {
+  if (selectionOverlay) {
+    modelGroup.remove(selectionOverlay);
+    selectionOverlay.geometry.dispose();
+    selectionOverlay.material.dispose();
+    selectionOverlay = null;
+  }
+  for (const edge of selectableEdges) {
+    const selected = selectedEdgeIds.has(edge.userData.edgeId);
+    edge.material.color.set(selected ? '#ffb020' : '#1f2830');
+    edge.material.opacity = selected ? 1.0 : 0.7;
+  }
+  if (selectedFaceIndex === null || !standaloneModelData) return;
+  const vertices = standaloneModelData.vertices;
+  const indices = standaloneModelData.indices;
+  const triangleFaces = standaloneModelData.triangle_face_indices || [];
+  const positions = [];
+  for (let triangleIndex = 0; triangleIndex < triangleFaces.length; triangleIndex++) {
+    if (triangleFaces[triangleIndex] !== selectedFaceIndex) continue;
+    for (let corner = 0; corner < 3; corner++) {
+      const vertexIndex = indices[triangleIndex * 3 + corner] * 3;
+      positions.push(
+        vertices[vertexIndex],
+        vertices[vertexIndex + 1],
+        vertices[vertexIndex + 2]
+      );
+    }
+  }
+  if (!positions.length) return;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const material = new THREE.MeshBasicMaterial({
+    color: '#ffb020',
+    transparent: true,
+    opacity: 0.55,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  selectionOverlay = new THREE.Mesh(geometry, material);
+  selectionOverlay.renderOrder = 3;
+  modelGroup.add(selectionOverlay);
+}
+
+function setTopologySelectionMode(mode) {
+  selectionMode = mode === 'edge' ? 'edge' : 'face';
+  if (standaloneModel) {
+    modelGroup.visible = true;
+    partGroup.visible = false;
+    toolGroup.visible = false;
+  }
+  selectedFaceIndex = null;
+  selectedEdgeIds.clear();
+  updateSelectionHighlight();
+  notifyTopologySelection();
+}
+
+function getTopologySelection() {
+  return {
+    kind: selectionMode,
+    faceIndex: selectedFaceIndex,
+    edgeIds: Array.from(selectedEdgeIds),
+  };
+}
+
+function notifyTopologySelection() {
+  if (typeof window.onTopologySelectionChanged !== 'function') return;
+  const topology = standaloneModelData ? standaloneModelData.topology || {} : {};
+  let detail = 'Click a model ' + selectionMode + ' to select it.';
+  if (selectionMode === 'face' && selectedFaceIndex !== null) {
+    const face = (topology.faces || []).find(item => item.index === selectedFaceIndex);
+    detail = face
+      ? `Face ${face.index + 1}: ${face.surface_type}, area ${face.area.toFixed(3)} mm²`
+      : `Face ${selectedFaceIndex + 1}`;
+  } else if (selectionMode === 'edge' && selectedEdgeIds.size) {
+    detail = `${selectedEdgeIds.size} edge${selectedEdgeIds.size === 1 ? '' : 's'} selected`;
+  }
+  window.onTopologySelectionChanged(getTopologySelection(), detail);
+}
+
 function buildTool(t) {
   if (!t) return;
   const radius = Math.max(0.05, t.diameter * 0.5);
@@ -241,8 +420,11 @@ function buildTool(t) {
 
   if (t.kind === 'ball') {
     const ball = new THREE.Mesh(
-      new THREE.SphereGeometry(radius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), cmat);
-    ball.position.z = 0;
+      new THREE.SphereGeometry(
+        radius, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2
+      ), cmat);
+    ball.rotation.x = Math.PI / 2;
+    ball.position.z = radius;
     toolGroup.add(ball);
     if (stickout > radius) {
       const sl = stickout - radius;
@@ -251,12 +433,6 @@ function buildTool(t) {
       sh.position.z = radius + sl * 0.5;
       toolGroup.add(sh);
     }
-    const contact = new THREE.Mesh(
-      new THREE.SphereGeometry(Math.max(0.5, radius * 0.4), 12, 8),
-      new THREE.MeshBasicMaterial({ color: '#ffd23f' })
-    );
-    contact.position.z = 0;
-    toolGroup.add(contact);
   } else {
     const tf = Math.max(0, (t.tipFlatDiameter || 0) * 0.5);
     const ha = THREE.MathUtils.degToRad(Math.max(1, Math.min(179, t.includedAngleDeg || 90)) * 0.5);
@@ -330,6 +506,7 @@ function applyPose(pose) {
     const rotAngle = THREE.MathUtils.degToRad(pose.partRotationDeg);
     const rotQuat = new THREE.Quaternion().setFromAxisAngle(sa, rotAngle);
     ref.applyQuaternion(rotQuat);
+    axis.applyQuaternion(rotQuat);
     partGroup.setRotationFromQuaternion(rotQuat);
   }
   toolGroup.position.copy(ref);
@@ -392,6 +569,8 @@ function updateSlider() {
 initScene();
 
 window.loadPreviewPayload = loadPreviewPayload;
-window.loadModelMesh = loadModelMesh;
+window.renderModelMesh = renderModelMesh;
+window.setTopologySelectionMode = setTopologySelectionMode;
+window.getTopologySelection = getTopologySelection;
 window.viewerStep = stepPose;
 window.viewerSeek = seekPose;

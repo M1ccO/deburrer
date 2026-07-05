@@ -37,3 +37,24 @@ def test_source_wire_corner_is_detected_even_if_stored_tangent_is_smoothed():
     )
 
     assert any(issue.code == "feature.chord_jump" for issue in report.issues)
+
+
+def test_open_feature_does_not_validate_across_its_endpoints():
+    from fc_deburr.domain.models import FeatureSample
+
+    samples = tuple(
+        FeatureSample(
+            position=(float(index), 0.0, 0.0),
+            tangent=(1.0, 0.0, 0.0),
+            guide_normal=(0.0, 1.0, 0.0),
+            other_normal=(0.0, 0.0, 1.0),
+        )
+        for index in range(4)
+    )
+
+    report = validate_feature(
+        FeatureLoop(id="open-edge", samples=samples, closed=False),
+        MachineProfile(),
+    )
+
+    assert report.ok
