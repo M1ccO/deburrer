@@ -1,0 +1,76 @@
+job:
+  name: ntx2500_demo_edge_deburr
+
+part:
+  file: parts/demo_part.step
+  unit: mm
+  workpiece_frame:
+    origin: [0.0, 0.0, 0.0]
+    spindle_axis: [1.0, 0.0, 0.0]
+
+features:
+  - type: edge_chains
+    label: "Top cover edges"
+    selection:
+      edge_ids: []  # filled by feature-extraction pass
+      face_ids: []
+    sampling:
+      spacing: 0.5
+    operation:
+      type: chamfer
+      width: 0.5
+      tool_id: chamfer_6mm_90deg
+
+tooling:
+  - id: chamfer_6mm_90deg
+    kind: chamfer
+    diameter: 6.0
+    stickout: 30.0
+    included_angle_deg: 90.0
+    tip_flat_diameter: 0.2
+    contact_radius: 3.0
+    radial_correction: 0.0
+    axial_correction: 0.0
+
+  - id: ball_6mm
+    kind: ball
+    diameter: 6.0
+    stickout: 30.0
+    cutting_length: 12.0
+    tip_radius: 3.0
+    radial_correction: 0.0
+    axial_correction: 0.0
+
+machine:
+  profile: ntx_tcp_provisional
+  kinematics:
+    type: ntx2500
+    motion_mode: indexed_3_plus_2
+    indexed_b_deg: null
+    indexed_c_deg: null
+  limits:
+    b: [-120.0, 120.0]
+    c: [null, null]
+  post:
+    controller: fanuc_ntx
+    diameter_programming: true
+    program_number: 1000
+    work_offset: G54
+
+fixtures:
+  - type: vice
+    file: fixtures/standard_vice.step
+    transform: [0, 0, 0, 0, 0, 0]
+
+stock:
+  type: bounding_box
+  file: stock/demo_stock.step
+
+process:
+  feed: 800.0
+  safety_lift: 3.0
+  lead_in_length: 2.0
+  lead_out_length: 2.0
+  lead_deg: 0.0
+  tilt_deg: 0.0
+  coolant: true

@@ -1,0 +1,1 @@
+"""Geometry regression test assets."""

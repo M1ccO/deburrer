@@ -1,0 +1,7 @@
+{
+  "kind": "fillet_test",
+  "face_count": 26,
+  "edge_count": 104,
+  "note": "Box with fillet on all 12 edges",
+  "file": "fillet_test.step"
+}

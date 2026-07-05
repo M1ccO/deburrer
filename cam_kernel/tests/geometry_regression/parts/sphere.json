@@ -1,0 +1,13 @@
+{
+  "kind": "sphere",
+  "face_count": 1,
+  "edge_count": 4,
+  "dimensions": {
+    "radius": 20
+  },
+  "expected_geometry": {
+    "spheres": 1,
+    "planes": 0
+  },
+  "file": "sphere.step"
+}

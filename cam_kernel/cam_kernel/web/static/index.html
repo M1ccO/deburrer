@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAM Kernel — Deburr Preview</title>
+<link rel="stylesheet" href="/static/style.css">
+<script type="module" src="/static/viewer.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <h1 class="logo">CAM Kernel</h1>
+
+    <!-- 0+1. Part & Feature -->
+    <section id="upload-section">
+      <h2>Part &amp; Feature</h2>
+      <p class="section-hint">Upload STEP for auto-extraction, or JSON from FreeCAD</p>
+      <input type="file" id="feature-file" accept=".step,.stp,.json" class="file-input">
+      <div class="button-row">
+        <button onclick="uploadFeature()" class="btn btn-primary">Load &amp; Extract</button>
+      </div>
+      <div id="feature-info" class="info-box">No part loaded — upload STEP or JSON</div>
+      <div id="model-info" class="info-box" style="margin-top:4px"></div>
+      <input type="hidden" id="session-id" value="">
+    </section>
+
+    <section id="aux-section">
+      <h2>Fixtures &amp; Stock (optional)</h2>
+      <p class="section-hint">STL only — used for collision and gouge checks</p>
+      <div class="form-row">
+        <label>Fixture STL
+          <input type="file" id="fixture-file" accept=".stl" class="file-input">
+        </label>
+        <label>Stock STL
+          <input type="file" id="stock-file" accept=".stl" class="file-input">
+        </label>
+      </div>
+      <button onclick="uploadAuxFiles()" class="btn btn-secondary" style="width:100%">Upload</button>
+      <div id="aux-info" class="info-box" style="margin-top:4px">No fixtures or stock loaded</div>
+    </section>
+
+    <!-- 2. Tool -->
+    <section id="tool-section">
+      <h2>2. Tool</h2>
+      <form id="tool-form" onsubmit="submitTool(event)">
+        <div class="form-row">
+          <label>Type
+            <select name="kind" class="input" onchange="onToolKindChange(this)">
+              <option value="ball" selected>Ball</option>
+              <option value="chamfer">Chamfer</option>
+            </select>
+          </label>
+          <label>Diameter (mm)
+            <input name="diameter" type="number" value="6" step="0.1" class="input">
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Stickout (mm)
+            <input name="stickout" type="number" value="30" step="1" class="input">
+          </label>
+          <label>Cutting length (mm)
+            <input name="cutting_length" type="number" value="12" step="1" class="input">
+          </label>
+        </div>
+        <div id="chamfer-fields" style="display:none">
+          <div class="form-row">
+            <label>Included angle (°)
+              <input name="included_angle_deg" type="number" value="90" step="1" class="input">
+            </label>
+            <label>Tip flat (mm)
+              <input name="tip_flat_diameter" type="number" value="0.2" step="0.1" class="input">
+            </label>
+          </div>
+          <label>Contact radius (mm)
+            <input name="contact_radius" type="number" value="1.5" step="0.1" class="input">
+          </label>
+        </div>
+        <button type="submit" class="btn btn-secondary">Set Tool</button>
+      </form>
+      <div id="tool-info" class="info-box">No tool configured</div>
+    </section>
+
+    <!-- 3. Operation -->
+    <section id="op-section">
+      <h2>3. Operation</h2>
+      <form id="op-form" onsubmit="submitOp(event)">
+        <label>Type
+          <select name="operation_type" class="input" id="op-type-select">
+            <option value="edge" selected>Edge deburr</option>
+            <option value="face">Face finishing</option>
+          </select>
+        </label>
+        <label>Motion mode
+          <select name="motion_mode" class="input">
+            <option value="indexed_3_plus_2">3+2 Indexed</option>
+            <option value="simultaneous_4_plus_1">4+1 (C fixed)</option>
+            <option value="simultaneous_5_axis">5-Axis Simultaneous</option>
+          </select>
+        </label>
+        <div class="form-row">
+          <label>Feed (mm/min)
+            <input name="feed" type="number" value="800" step="10" class="input">
+          </label>
+          <label>Safety lift (mm)
+            <input name="safety_lift" type="number" value="3" step="0.5" class="input">
+          </label>
+        </div>
+        <div id="chamfer-op-fields">
+          <label>Chamfer width (mm)
+            <input name="target_width" type="number" value="0.5" step="0.05" class="input">
+          </label>
+        </div>
+        <div id="ball-op-fields" style="display:none">
+          <label>Ball engagement (mm)
+            <input name="ball_engagement" type="number" value="0.3" step="0.05" class="input">
+          </label>
+        </div>
+        <div id="face-op-fields" style="display:none">
+          <div class="form-row">
+            <label>Surface tolerance (mm)
+              <input name="surface_tolerance" type="number" value="0.01" step="0.005" class="input">
+            </label>
+            <label>Path spacing (mm)
+              <input name="path_sample_spacing" type="number" value="0.5" step="0.1" class="input">
+            </label>
+          </div>
+          <label>Pass direction
+            <select name="surface_direction" class="input">
+              <option value="auto">Auto</option>
+              <option value="x">X</option>
+              <option value="y">Y</option>
+              <option value="z">Z</option>
+            </select>
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Lead (°)
+            <input name="lead_deg" type="number" value="0" step="1" class="input">
+          </label>
+          <label>Tilt (°)
+            <input name="tilt_deg" type="number" value="0" step="1" class="input">
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Lead in (mm)
+            <input name="lead_in_length" type="number" value="2" step="0.5" class="input">
+          </label>
+          <label>Lead out (mm)
+            <input name="lead_out_length" type="number" value="2" step="0.5" class="input">
+          </label>
+        </div>
+        <label class="checkbox-label">
+          <input type="checkbox" name="flip_side"> Flip deburr side
+        </label>
+        <button type="submit" class="btn btn-secondary">Set Operation</button>
+      </form>
+      <div id="op-info" class="info-box">No operation configured</div>
+    </section>
+
+    <!-- 4. Calculate -->
+    <section id="calculate-section">
+      <h2>4. Calculate</h2>
+      <button onclick="doCalculate()" class="btn btn-primary btn-wide">Calculate &amp; Validate</button>
+      <div id="calc-result" class="info-box"></div>
+    </section>
+
+    <!-- Post settings -->
+    <section id="post-section">
+      <h2>Post Settings</h2>
+      <div class="form-row">
+        <label>Prog #
+          <input id="post-prog" type="number" value="1000" class="input">
+        </label>
+        <label>Tool code
+          <input id="post-tool" type="text" value="T01" class="input">
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Offset
+          <input id="post-offset" type="text" value="G54" class="input">
+        </label>
+        <label>Spindle RPM
+          <input id="post-rpm" type="number" value="0" class="input" placeholder="0=omit">
+        </label>
+      </div>
+    </section>
+  </aside>
+
+  <main id="main">
+    <div id="status-bar">
+      <span id="status-text" class="status-idle">Ready — upload a Feature JSON to begin</span>
+    </div>
+
+    <div id="viewer-container">
+      <div id="viewer-loading">Upload a feature to begin</div>
+      <div id="viewer-error" style="display:none"></div>
+      <canvas id="viewer-canvas" style="display:none"></canvas>
+      <div id="viewer-legend" style="display:none">
+        <div class="legend-item"><span class="legend-swatch" style="background:#00d7ff"></span>Source</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#65e572"></span>Contact</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#ffd23f"></span>Cutter path</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#ff9f43"></span>Trail</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#c58b3b"></span>Tool</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:#526474"></span>Part</div>
+      </div>
+    </div>
+
+    <div id="time-controls" style="display:none">
+      <button onclick="window.viewerStep(-1)" class="ctrl-btn">&#9664;</button>
+      <input type="range" id="pose-slider" min="0" max="0" value="0"
+             oninput="window.viewerSeek(this.value)">
+      <button onclick="window.viewerStep(1)" class="ctrl-btn">&#9654;</button>
+      <span id="pose-label" class="ctrl-label">-/-</span>
+    </div>
+
+    <div id="tabs">
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('nc')">NC Output</button>
+        <button class="tab-btn" onclick="switchTab('metrics')">Metrics</button>
+        <button class="tab-btn" onclick="switchTab('collision')">Collision</button>
+        <button class="tab-btn" onclick="switchTab('errors')">Errors</button>
+      </div>
+      <div class="tab-content">
+        <pre id="tab-nc" class="tab-pane active">No NC output yet</pre>
+        <pre id="tab-metrics" class="tab-pane">No metrics yet</pre>
+        <pre id="tab-collision" class="tab-pane">No collision check yet</pre>
+        <pre id="tab-errors" class="tab-pane">No errors</pre>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script>
+let sessionId = '';
+
+function updateStatus(status) {
+  document.getElementById('status-text').textContent = status;
+  document.getElementById('status-text').className = 'status-' + (status === 'error' ? 'error' : 'active');
+}
+
+function getSid() {
+  return document.getElementById('session-id').value;
+}
+
+async function uploadFeature() {
+  const fileEl = document.getElementById('feature-file');
+  const file = fileEl.files[0];
+  if (!file) { alert('Select a file first'); return; }
+  const ext = file.name.toLowerCase().split('.').pop();
+  const form = new FormData();
+  form.append('file', file);
+
+  updateStatus('loading...');
+  document.getElementById('feature-info').textContent = 'Processing...';
+  document.getElementById('model-info').textContent = '';
+
+  try {
+    if (ext === 'step' || ext === 'stp') {
+      // Create session first, then upload STEP
+      const resp1 = await fetch('/api/jobs', { method: 'POST', body: form });
+      const data1 = await resp1.json();
+      document.getElementById('session-id').value = data1.id;
+      sessionId = data1.id;
+
+      const resp2 = await fetch('/api/jobs/' + data1.id + '/step', { method: 'POST', body: form });
+      if (!resp2.ok) { const err = await resp2.json(); throw new Error(err.detail); }
+      const data2 = await resp2.json();
+      const fi = data2.feature;
+      document.getElementById('feature-info').innerHTML =
+        `STEP: ${fi.id} | Type: ${fi.type} | Closed: ${fi.closed} | Samples: ${fi.sample_count}`;
+      document.getElementById('model-info').textContent = '3D model tessellated';
+      loadModelMesh(data1.id);
+      updateStatus(data2.status);
+    } else if (ext === 'json') {
+      const resp = await fetch('/api/jobs', { method: 'POST', body: form });
+      const data = await resp.json();
+      document.getElementById('session-id').value = data.id;
+      sessionId = data.id;
+      const fi = data.feature;
+      document.getElementById('feature-info').innerHTML =
+        `JSON: ${fi.type} | Closed: ${fi.closed} | Samples: ${fi.sample_count || '?'}`;
+      updateStatus(data.status);
+    } else {
+      alert('Unsupported file. Upload .step or .json');
+    }
+  } catch(e) {
+    document.getElementById('feature-info').textContent = 'Error: ' + e.message;
+    updateStatus('error');
+  }
+}
+
+async function uploadAuxFiles() {
+  const sid = getSid();
+  if (!sid) { alert('Load a part first to create a session.'); return; }
+  const fixtureEl = document.getElementById('fixture-file');
+  const stockEl = document.getElementById('stock-file');
+  const messages = [];
+
+  if (fixtureEl.files[0]) {
+    const f = fixtureEl.files[0];
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      const resp = await fetch('/api/jobs/' + sid + '/fixture', { method: 'POST', body: form });
+      if (!resp.ok) {
+        const err = await resp.json();
+        messages.push('Fixture error: ' + err.detail);
+      } else {
+        const data = await resp.json();
+        messages.push(`Fixture: ${data.fixture.filename} (${data.fixture.triangle_count} tris)`);
+      }
+    } catch(e) {
+      messages.push('Fixture error: ' + e.message);
+    }
+  }
+
+  if (stockEl.files[0]) {
+    const f = stockEl.files[0];
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      const resp = await fetch('/api/jobs/' + sid + '/stock', { method: 'POST', body: form });
+      if (!resp.ok) {
+        const err = await resp.json();
+        messages.push('Stock error: ' + err.detail);
+      } else {
+        const data = await resp.json();
+        messages.push(`Stock: ${data.stock.filename} (${data.stock.triangle_count} tris)`);
+      }
+    } catch(e) {
+      messages.push('Stock error: ' + e.message);
+    }
+  }
+
+  if (messages.length === 0) {
+    messages.push('No files selected');
+  }
+  document.getElementById('aux-info').textContent = messages.join(' | ');
+}
+
+async function loadModelMesh(sid) {
+  try {
+    const resp = await fetch('/api/jobs/' + sid + '/model_data');
+    const mesh = await resp.json();
+    if (window.loadModelMesh) window.loadModelMesh(mesh);
+  } catch(e) {}
+}
+
+async function submitTool(event) {
+  event.preventDefault();
+  const sid = getSid();
+  if (!sid) { alert('Upload a feature JSON first.'); return; }
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form));
+  try {
+    const resp = await fetch('/api/jobs/' + sid + '/tool', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+    });
+    const result = await resp.json();
+    document.getElementById('tool-info').innerHTML =
+      `${result.tool.kind} | D=${result.tool.diameter}mm | L=${result.tool.stickout}mm`;
+    updateStatus(result.status);
+  } catch(e) {
+    document.getElementById('tool-info').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function submitOp(event) {
+  event.preventDefault();
+  const sid = getSid();
+  if (!sid) { alert('Upload a feature JSON first.'); return; }
+  const form = event.target;
+  const data = Object.fromEntries(new FormData(form));
+  data.flip_side = form.querySelector('[name=flip_side]').checked;
+  try {
+    const resp = await fetch('/api/jobs/' + sid + '/op', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+    });
+    const result = await resp.json();
+    document.getElementById('op-info').innerHTML =
+      `Mode: ${result.operation.motion_mode} | Feed: ${result.operation.feed}mm/min`;
+    updateStatus(result.status);
+  } catch(e) {
+    document.getElementById('op-info').textContent = 'Error: ' + e.message;
+  }
+}
+
+async function doCalculate() {
+  const sid = getSid();
+  if (!sid) { alert('Upload a feature JSON first.'); return; }
+  document.getElementById('calc-result').textContent = 'Calculating...';
+  try {
+    const opData = Object.fromEntries(new FormData(document.getElementById('op-form')));
+    opData.flip_side = document.querySelector('#op-form [name=flip_side]').checked;
+    opData.program_number = parseInt(document.getElementById('post-prog').value) || 1000;
+    opData.tool_code = document.getElementById('post-tool').value || 'T01';
+    opData.work_offset = document.getElementById('post-offset').value || 'G54';
+    const rpm = parseInt(document.getElementById('post-rpm').value);
+    if (rpm > 0) opData.spindle_speed = rpm;
+    opData.coolant = true;
+
+    const resp = await fetch('/api/jobs/' + sid + '/calc', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(opData)
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      document.getElementById('calc-result').textContent = 'Error: ' + err.detail;
+      updateStatus('error');
+      return;
+    }
+    const data = await resp.json();
+    document.getElementById('calc-result').innerHTML = data.metrics || 'Done';
+    updateStatus(data.status);
+    if (data.has_preview) loadPreview(sid);
+    if (data.has_nc) fetchNC(sid);
+    if (data.errors && data.errors.length) {
+      document.getElementById('tab-errors').textContent = data.errors.join('\n');
+    }
+    if (data.collision) {
+      let colText = '';
+      if (data.collision.status === 'skipped') {
+        colText = 'Collision: ' + (data.collision.reason || 'skipped');
+      } else if (data.collision.status === 'checked') {
+        colText = `Collision checked (${data.collision.checked_stations} stations):\n`;
+        if (data.collision.gouge) {
+          colText += `  Gouge: ${data.collision.gouge.gouge_detected ? 'YES' : 'no'} (${data.collision.gouge.diagnosis})\n`;
+        }
+        if (data.collision.holder) {
+          colText += `  Holder vs Part: ${data.collision.holder.colliding ? 'COLLISION' : 'clear'}\n`;
+        }
+        if (data.collision.fixture) {
+          colText += `  Holder vs Fixture: ${data.collision.fixture.colliding ? 'COLLISION' : 'clear'}\n`;
+        }
+      } else if (data.collision.status === 'error') {
+        colText = 'Collision error: ' + data.collision.reason;
+      }
+      document.getElementById('tab-collision').textContent = colText;
+    }
+  } catch(e) {
+    document.getElementById('calc-result').textContent = 'Error: ' + e.message;
+    updateStatus('error');
+  }
+}
+
+async function loadPreview(sid) {
+  try {
+    const resp = await fetch('/api/jobs/' + sid + '/preview');
+    const payload = await resp.json();
+    if (window.loadPreviewPayload) window.loadPreviewPayload(payload);
+    document.getElementById('viewer-loading').style.display = 'none';
+  } catch(e) {
+    document.getElementById('viewer-error').textContent = 'Preview error: ' + e.message;
+    document.getElementById('viewer-error').style.display = 'block';
+  }
+}
+
+async function fetchNC(sid) {
+  try {
+    const resp = await fetch('/api/jobs/' + sid + '/nc');
+    document.getElementById('tab-nc').textContent = await resp.text();
+  } catch(e) {
+    document.getElementById('tab-nc').textContent = 'NC error: ' + e.message;
+  }
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+function onToolKindChange(sel) {
+  const chamferFields = document.getElementById('chamfer-fields');
+  const chamferOpFields = document.getElementById('chamfer-op-fields');
+  const ballOpFields = document.getElementById('ball-op-fields');
+  if (sel.value === 'chamfer') {
+    chamferFields.style.display = 'block';
+    chamferOpFields.style.display = 'block';
+    ballOpFields.style.display = 'none';
+  } else {
+    chamferFields.style.display = 'none';
+    chamferOpFields.style.display = 'none';
+    ballOpFields.style.display = 'block';
+  }
+}
+onToolKindChange(document.querySelector('select[name="kind"]'));
+
+function onOpTypeChange(sel) {
+  const chamferOpFields = document.getElementById('chamfer-op-fields');
+  const ballOpFields = document.getElementById('ball-op-fields');
+  const faceOpFields = document.getElementById('face-op-fields');
+  if (sel.value === 'face') {
+    chamferOpFields.style.display = 'none';
+    ballOpFields.style.display = 'none';
+    faceOpFields.style.display = 'block';
+  } else {
+    faceOpFields.style.display = 'none';
+    onToolKindChange(document.querySelector('select[name="kind"]'));
+  }
+}
+onOpTypeChange(document.querySelector('#op-type-select'));
+</script>
+
+</body>
+</html>

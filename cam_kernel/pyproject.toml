@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=75.8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cam-kernel"
+version = "0.1.0"
+description = "Standalone Python CAM kernel for multiaxis deburring and surface finishing"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Deburrer Contributors"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: CAM",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "fastapi>=0.109",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+occt = [
+    "cadquery-ocp>=7.7",
+]
+collision = [
+    "python-fcl>=0.7",
+]
+meshing = [
+    "trimesh>=3.21",
+]
+all = [
+    "cam-kernel[occt,collision,meshing]",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["cam_kernel*"]
+exclude = ["native*", "tests*"]
+
+[project.scripts]
+cam-kernel-web = "cam_kernel.web.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["..", "."]

@@ -4,18 +4,34 @@ import os
 import json
 from dataclasses import dataclass, asdict
 
-from PySide2.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QLabel, QLineEdit, QGridLayout, QStackedWidget,
-    QFileDialog, QCheckBox, QComboBox, QMessageBox, QFrame, QListWidget,
-    QListWidgetItem, QSizePolicy, QListView
-)
-from PySide2.QtCore import Qt, QUrl
-from PySide2.QtGui import QDesktopServices
+# Support both PySide6 and PySide2
+try:
+    from PySide6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+        QPushButton, QLabel, QLineEdit, QGridLayout, QStackedWidget,
+        QFileDialog, QCheckBox, QComboBox, QMessageBox, QFrame, QListWidget,
+        QListWidgetItem, QSizePolicy, QListView, QDialog, QTextEdit
+    )
+    from PySide6.QtCore import Qt, QUrl
+    from PySide6.QtGui import QDesktopServices
+    QT6 = True
+except ImportError:
+    from PySide2.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+        QPushButton, QLabel, QLineEdit, QGridLayout, QStackedWidget,
+        QFileDialog, QCheckBox, QComboBox, QMessageBox, QFrame, QListWidget,
+        QListWidgetItem, QSizePolicy, QListView, QDialog, QTextEdit
+    )
+    from PySide2.QtCore import Qt, QUrl
+    from PySide2.QtGui import QDesktopServices
+    QT6 = False
 
 # Try WebEngine, but allow running without it
 try:
-    from PySide2.QtWebEngineWidgets import QWebEngineView
+    if QT6:
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+    else:
+        from PySide2.QtWebEngineWidgets import QWebEngineView
     HAS_WEBENGINE = True
 except ImportError:
     QWebEngineView = None
@@ -1091,7 +1107,6 @@ class MainWindow(QMainWindow):
         nc_text = self._build_preview_nc_text()
         if not nc_text:
             return
-        from PySide2.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton
         dlg = QDialog(self)
         dlg.setWindowTitle("NC Preview")
         dlg.resize(800, 600)
@@ -1103,7 +1118,7 @@ class MainWindow(QMainWindow):
         btn = QPushButton("Close")
         btn.clicked.connect(dlg.accept)
         v.addWidget(btn, alignment=Qt.AlignRight)
-        dlg.exec_()
+        dlg.exec() if QT6 else dlg.exec_()
 
     def _create_page_machine_setup(self):
         page, grid = self._create_two_column_page("Machine Setup")
@@ -1852,7 +1867,7 @@ def main():
 
     win = MainWindow(csv_override=csv_override)
     win.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec() if QT6 else app.exec_())
 
 
 if __name__ == "__main__":

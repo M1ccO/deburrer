@@ -1,0 +1,7 @@
+{
+  "kind": "stepped_shaft",
+  "face_count": 5,
+  "edge_count": 12,
+  "note": "Cylinder stack \u2014 typical lathe part",
+  "file": "stepped_shaft.step"
+}

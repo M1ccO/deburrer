@@ -1,0 +1,1 @@
+"""Machine proving test assets."""

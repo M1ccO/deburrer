@@ -1,0 +1,16 @@
+{
+  "kind": "box",
+  "face_count": 6,
+  "edge_count": 24,
+  "dimensions": [
+    30,
+    20,
+    10
+  ],
+  "expected_geometry": {
+    "planes": 6,
+    "cylinders": 0,
+    "cones": 0
+  },
+  "file": "box.step"
+}

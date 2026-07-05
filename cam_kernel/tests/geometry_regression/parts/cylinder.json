@@ -1,0 +1,14 @@
+{
+  "kind": "cylinder",
+  "face_count": 3,
+  "edge_count": 6,
+  "dimensions": {
+    "radius": 15,
+    "height": 10
+  },
+  "expected_geometry": {
+    "planes": 2,
+    "cylinders": 1
+  },
+  "file": "cylinder.step"
+}

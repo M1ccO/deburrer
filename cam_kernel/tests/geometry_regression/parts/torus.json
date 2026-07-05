@@ -1,0 +1,14 @@
+{
+  "kind": "torus",
+  "face_count": 1,
+  "edge_count": 4,
+  "dimensions": {
+    "major_r": 30,
+    "minor_r": 10
+  },
+  "expected_geometry": {
+    "tori": 1,
+    "planes": 0
+  },
+  "file": "torus.step"
+}

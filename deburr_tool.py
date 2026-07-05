@@ -127,7 +127,8 @@ def generate_nc(points,
                 clearance,
                 radial_scale=1.0,
                 spindle_m_code="M303",
-                work_offset="G54"):
+                work_offset="G54",
+                diameter_mode=True):
     """
     points        : MODEL points (after any model scaling/offset)
     radial_scale  : applied in MACHINE Y/Z after remap, around (Y0,Z0)
@@ -142,11 +143,6 @@ def generate_nc(points,
         mach_pts = radial_scale_machine_yz(
             mach_pts, radial_scale, cy=0.0, cz=0.0
         )
-
-    start = mach_pts[0]
-
-    # Safe approach = Z + clearance
-    approach = (start[0], start[1], start[2] + clearance)
 
     # Actual spindle rotation direction M03/M04
     spindle_m = "M03" if spindle_dir.upper() == "CW" else "M04"
@@ -176,28 +172,46 @@ def generate_nc(points,
     if coolant_on:
         lines.append("M08")
 
-    # Approach
-    lines.append(
-        f"G00 X{approach[0]:.4f} Y{approach[1]:.4f} Z{approach[2]:.4f}"
-    )
-    lines.append(f"G01 Z{start[2]:.4f} F{feed:.3f}")
+    # Diameter mode: double X values
+    x_mul = 2.0 if diameter_mode else 1.0
 
-    # Cutter compensation
+    # Origin = center of contour bounding box (matches HTML preview)
+    x_center = 0.5 * (min(p[0] for p in mach_pts) + max(p[0] for p in mach_pts))
+    y_center = 0.5 * (min(p[1] for p in mach_pts) + max(p[1] for p in mach_pts))
+    z_center = 0.5 * (min(p[2] for p in mach_pts) + max(p[2] for p in mach_pts))
+    origin = (x_center, y_center, z_center)
+    safe_origin = (x_center, y_center, z_center + clearance)
+
+    # 1. Rapid to origin at safe Z
+    lines.append(
+        f"G00 X{safe_origin[0] * x_mul:.4f} Y{safe_origin[1]:.4f} Z{safe_origin[2]:.4f}"
+    )
+
+    # 2. Plunge to origin depth
+    lines.append(f"G01 Z{origin[2]:.4f} F{feed:.3f}")
+
+    # 3. Cutter compensation
     if comp_mode in ("G41", "G42"):
         lines.append(comp_mode)
 
-    # Motion path
-    for x, y, z in mach_pts:
-        lines.append(f"G01 X{x:.4f} Y{y:.4f} Z{z:.4f} F{feed:.3f}")
+    # 4. Move to first contour point, traverse full contour, return to origin
+    for i, (x, y, z) in enumerate(mach_pts):
+        if i == 0:
+            lines.append(f"G01 X{x * x_mul:.4f} Y{y:.4f} Z{z:.4f} F{feed:.3f}")
+        else:
+            lines.append(f"G01 X{x * x_mul:.4f} Y{y:.4f} Z{z:.4f}")
 
-    # Cancel compensation
+    # 5. Close back to origin (same as first point for closed contour)
+    lines.append(f"G01 X{origin[0] * x_mul:.4f} Y{origin[1]:.4f} Z{origin[2]:.4f}")
+
+    # 6. Cancel compensation
     if comp_mode in ("G41", "G42"):
         lines.append("G40")
 
     if coolant_on:
         lines.append("M09")
 
-    lines.append(f"G00 Z{approach[2]:.4f}")
+    lines.append(f"G00 Z{safe_origin[2]:.4f}")
     lines.append("M05")
     lines.append("M30")
 
